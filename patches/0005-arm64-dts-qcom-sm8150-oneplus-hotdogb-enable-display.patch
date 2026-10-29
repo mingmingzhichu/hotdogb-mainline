@@ -1,0 +1,130 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hotdogb bring-up <noreply@example.com>
+Date: Thu, 29 Oct 2026 23:20:00 +0800
+Subject: [PATCH 5/6] arm64: dts: qcom: sm8150-oneplus-hotdogb: enable the display
+
+Wire up the display pipeline on the OnePlus 7T: DPU 5.0, DSI0, the 7nm
+DSI PHY and the Samsung SOFEF03F panel.
+
+DSI0 is fed from PM8150L LDO3 (1.2V) and the PHY from PM8150L LDO5
+(0.875V), matching the vendor configuration.  GPIO 6 is the panel reset
+line and GPIO 8 carries the tearing effect signal, muxed to mdp_vsync so
+the DPU can synchronise with the panel in command mode.
+
+The simple-framebuffer node is dropped as well: it described the
+bootloader splash buffer at 0x9c000000, which would otherwise fight with
+the real driver for the same memory.  The reserved-memory carveout stays
+so nothing else is allocated on top of that region.
+
+Signed-off-by: hotdogb bring-up <noreply@example.com>
+---
+ arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts | 85 ++++++++++++++++++++++++++++++++++++++++---------------------
+ 1 file changed, 64 insertions(+), 21 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts b/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
+--- a/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
+@@ -13,30 +13,10 @@
+ 	model = "OnePlus 7T";
+ 	compatible = "oneplus,hotdogb", "oneplus,oneplus7", "qcom,sm8150";
+ 
+-	aliases {
+-		display0 = &framebuffer0;
+-	};
+-
+ 	chosen {
+ 		#address-cells = <2>;
+         #size-cells = <2>;
+         ranges;
+-		stdout-path = "display0";
+-
+-		/*
+-         * hack: Use framebuffer setup by the bootloader for simplefb.
+-         * the address is taken from the bootloader config (strings xbl.img | grep "Display Reserved")
+-         */
+-        framebuffer0: framebuffer@9C000000 {
+-            compatible = "simple-framebuffer";
+-            reg = <0 0x9C000000 0 (1080 * 2400 * 4)>;
+-            width = <1080>;
+-            height = <2400>;
+-            stride = <(1080 * 4)>;
+-            format = "a8r8g8b8";
+-            status = "okay";
+-
+-        };
+ 	};
+ 
+ 	reserved-memory {
+@@ -62,4 +42,67 @@
+ 			ecc-size = <0x0>;
+ 		};
+ 	};
+-};
+\ No newline at end of file
++};
++
++/*
++ * Display: DPU 5.0 + DSI0 + 7nm PHY + Samsung SOFEF03F M FHD panel.
++ *
++ * The panel is a command mode AMOLED with DSC (1080x2400).  lab/ibb bias
++ * rails come from the PM8150L LCDB block, which mainline cannot control, so
++ * we depend on the bootloader having left them enabled.
++ */
++&mdss {
++	status = "okay";
++};
++
++&mdss_dsi0 {
++	vdda-supply = <&vreg_l3c_1p2>;
++	status = "okay";
++
++	panel@0 {
++		compatible = "samsung,sofef03f";
++		reg = <0>;
++
++		vddio-supply = <&vreg_l14a_1p8>;
++
++		reset-gpios = <&tlmm 6 GPIO_ACTIVE_LOW>;
++		te-gpios = <&tlmm 8 GPIO_ACTIVE_LOW>;
++
++		pinctrl-names = "default";
++		pinctrl-0 = <&panel_reset_pin &panel_te_pin>;
++
++		port {
++			panel_in: endpoint {
++				remote-endpoint = <&mdss_dsi0_out>;
++			};
++		};
++	};
++};
++
++&mdss_dsi0_out {
++	data-lanes = <0 1 2 3>;
++	remote-endpoint = <&panel_in>;
++};
++
++&mdss_dsi0_phy {
++	vdds-supply = <&vreg_l5a_0p875>;
++	status = "okay";
++};
++
++&tlmm {
++	panel_reset_pin: panel-reset-state {
++		pins = "gpio6";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++		output-low;
++		power-source = <1>;
++	};
++
++	panel_te_pin: panel-te-state {
++		pins = "gpio8";
++		function = "mdp_vsync";
++		drive-strength = <2>;
++		bias-pull-down;
++	};
++};
+
+-- 
+2.43.0

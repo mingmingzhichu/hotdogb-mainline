@@ -1,0 +1,499 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hotdogb bring-up <noreply@example.com>
+Date: Thu, 29 Oct 2026 23:20:00 +0800
+Subject: [PATCH 2/6] drm/panel: add driver for the Samsung SOFEF03F DSC panel
+
+Add a DRM panel driver for the Samsung SOFEF03F M FHD AMOLED panel used
+by the OnePlus 7T (hotdogb).
+
+The panel is a 1080x2400 command mode panel that requires VESA DSC: the
+picture is split into two 540x30 slices with 8 bits per component and
+8 bits per pixel.  The init sequence (43 DSI packets, 554 bytes), the
+128 byte picture parameter set and every DSC rate control parameter are
+taken verbatim from the vendor device tree, so the panel is programmed
+exactly like the stock bootloader and kernel do.
+
+Brightness is controlled over DSI (MIPI DCS set_display_brightness),
+which is what the hardware supports.
+
+The panel also needs the lab/ibb bias rails from the PM8150L LCDB block.
+Mainline has no driver for that block yet, so the driver only models
+vddio and relies on the rails being left enabled by the bootloader.
+
+Signed-off-by: hotdogb bring-up <noreply@example.com>
+---
+ drivers/gpu/drm/panel/Kconfig | 439 ++++++++++++++++++++++++++++++++++++++++
+ drivers/gpu/drm/panel/Makefile | 439 ++++++++++++++++++++++++++++++++++++++++
+ drivers/gpu/drm/panel/panel-samsung-sofef03f.c | 439 ++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 439 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
+index 5a582ecc2..ddf2be128 100644
+--- a/drivers/gpu/drm/panel/Kconfig
++++ b/drivers/gpu/drm/panel/Kconfig
+@@ -941,6 +941,18 @@ config DRM_PANEL_SAMSUNG_SOFEF00
+ 
+ 	    Samsung AMS628NW01 (found in OnePlus 6, 1080x2280@60Hz)
+ 
++config DRM_PANEL_SAMSUNG_SOFEF03F
++	tristate "Samsung SOFEF03F M FHD DSI panel (OnePlus 7T)"
++	depends on OF
++	depends on DRM_MIPI_DSI
++	depends on BACKLIGHT_CLASS_DEVICE
++	select VIDEOMODE_HELPERS
++	help
++	  Say Y or M here if you want to enable support for the Samsung
++	  SOFEF03F M FHD command mode AMOLED panel with DSC, found in
++	  the OnePlus 7T (hotdogb).  The panel is 1080x2400 at 60Hz and
++	  uses 4 DSI lanes with 8 bits per component.
++
+ config DRM_PANEL_SEIKO_43WVF1G
+ 	tristate "Seiko 43WVF1G panel"
+ 	depends on OF
+diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
+index e96f089f7..ee6eeeca5 100644
+--- a/drivers/gpu/drm/panel/Makefile
++++ b/drivers/gpu/drm/panel/Makefile
+@@ -95,6 +95,7 @@ obj-$(CONFIG_DRM_PANEL_SAMSUNG_S6E88A0_AMS452EF01) += panel-samsung-s6e88a0-ams4
+ obj-$(CONFIG_DRM_PANEL_SAMSUNG_S6E8AA0) += panel-samsung-s6e8aa0.o
+ obj-$(CONFIG_DRM_PANEL_SAMSUNG_S6E8AA5X01_AMS561RA01) += panel-samsung-s6e8aa5x01-ams561ra01.o
+ obj-$(CONFIG_DRM_PANEL_SAMSUNG_SOFEF00) += panel-samsung-sofef00.o
++obj-$(CONFIG_DRM_PANEL_SAMSUNG_SOFEF03F) += panel-samsung-sofef03f.o
+ obj-$(CONFIG_DRM_PANEL_SEIKO_43WVF1G) += panel-seiko-43wvf1g.o
+ obj-$(CONFIG_DRM_PANEL_SHARP_LQ079L1SX01) += panel-sharp-lq079l1sx01.o
+ obj-$(CONFIG_DRM_PANEL_SHARP_LQ101R1SX01) += panel-sharp-lq101r1sx01.o
+diff --git a/drivers/gpu/drm/panel/panel-samsung-sofef03f.c b/drivers/gpu/drm/panel/panel-samsung-sofef03f.c
+new file mode 100644
+index 000000000..0c73bc253
+--- /dev/null
++++ b/drivers/gpu/drm/panel/panel-samsung-sofef03f.c
+@@ -0,0 +1,426 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Samsung SOFEF03F M FHD panel driver
++ *
++ * 1080x2400 command mode AMOLED with DSC, as found on the OnePlus 7T
++ * (hotdogb).  Initialisation sequence, timings and DSC parameters are
++ * taken verbatim from the vendor device tree node
++ * "qcom,mdss_dsi_samsung_sofef03f_m_fhd_dsc_cmd".
++ */
++
++#include <linux/backlight.h>
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/regulator/consumer.h>
++
++#include <video/mipi_display.h>
++
++#include <drm/display/drm_dsc.h>
++#include <drm/drm_mipi_dsi.h>
++#include <drm/drm_modes.h>
++#include <drm/drm_panel.h>
++#include <drm/drm_probe_helper.h>
++
++struct sofef03f {
++	struct drm_panel panel;
++	struct mipi_dsi_device *dsi;
++	struct drm_dsc_config dsc;
++	struct regulator_bulk_data *supplies;
++	struct gpio_desc *reset_gpio;
++};
++
++/*
++ * The panel also needs the LCDB bias rails (lab/ibb) which come from the
++ * PM8150L LCDB block.  Mainline has no driver for that block, so we rely on
++ * the bootloader leaving them enabled (continuous splash).  Only vddio is
++ * modelled here.
++ */
++static const struct regulator_bulk_data sofef03f_supplies[] = {
++	{ .supply = "vddio" },
++};
++
++static inline struct sofef03f *to_sofef03f(struct drm_panel *panel)
++{
++	return container_of(panel, struct sofef03f, panel);
++}
++
++/*
++ * Vendor reset sequence: qcom,mdss-dsi-reset-sequence = <1 10 0 1 1 10>
++ * (physical high 10ms, low 1ms, high 10ms).  reset-gpios is active low, so
++ * logical 0 drives the line high (out of reset).
++ */
++static void sofef03f_reset(struct sofef03f *ctx)
++{
++	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++	usleep_range(10000, 11000);
++	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++	usleep_range(1000, 1100);
++	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
++	usleep_range(10000, 11000);
++}
++
++/* 0x9e SET_PPS payload, copied verbatim from the vendor init sequence. */
++static const u8 sofef03f_pps[] = {
++	0x9e,
++	0x11, 0x00, 0x00, 0x89, 0x30, 0x80, 0x09, 0x60, 0x04, 0x38, 0x00, 0x1e,
++	0x02, 0x1c, 0x02, 0x1c, 0x02, 0x00, 0x02, 0x0e, 0x00, 0x20, 0x02, 0xe3,
++	0x00, 0x07, 0x00, 0x0c, 0x03, 0x50, 0x03, 0x64, 0x18, 0x00, 0x10, 0xf0,
++	0x03, 0x0c, 0x20, 0x00, 0x06, 0x0b, 0x0b, 0x33, 0x0e, 0x1c, 0x2a, 0x38,
++	0x46, 0x54, 0x62, 0x69, 0x70, 0x77, 0x79, 0x7b, 0x7d, 0x7e, 0x01, 0x02,
++	0x01, 0x00, 0x09, 0x40, 0x09, 0xbe, 0x19, 0xfc, 0x19, 0xfa, 0x19, 0xf8,
++	0x1a, 0x38, 0x1a, 0x78, 0x1a, 0xb6, 0x2a, 0xf6, 0x2b, 0x34, 0x2b, 0x74,
++	0x3b, 0x74, 0x6b, 0xf4, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++};
++
++static int sofef03f_on(struct sofef03f *ctx)
++{
++	struct mipi_dsi_device *dsi = ctx->dsi;
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = dsi };
++	int ret;
++
++	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x9d, 0x01);
++	/* SET_PPS */
++	ret = mipi_dsi_dcs_write_buffer(dsi, sofef03f_pps, sizeof(sofef03f_pps));
++	if (ret < 0)
++		return ret;
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x11);
++	mipi_dsi_msleep(&dsi_ctx, 10);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x35, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2a, 0x00, 0x00, 0x04, 0x37);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x2b, 0x00, 0x00, 0x09, 0x5f);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x05);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb7, 0x13);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb7, 0x53);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x06);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb7, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xdf, 0x83);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x0a);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xd5, 0x05);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x02);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xec, 0x00, 0xc2, 0xc2, 0x42);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x0d);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xec, 0x19);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xfc, 0x5a, 0x5a);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xb0, 0x01);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xe4, 0xa6, 0xc3, 0x42);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xe9, 0x11, 0x75, 0xa6, 0xc3, 0x42,
++				     0x96, 0x2f, 0x58, 0x96, 0x2f, 0x58, 0x00, 0x32,
++				     0x32);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xfc, 0xa5, 0xa5);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x53, 0x20);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0x5a, 0x5a);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x60, 0x00);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf0, 0xa5, 0xa5);
++	mipi_dsi_msleep(&dsi_ctx, 60);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x29);
++
++	return dsi_ctx.accum_err;
++}
++
++static int sofef03f_off(struct sofef03f *ctx)
++{
++	struct mipi_dsi_device *dsi = ctx->dsi;
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = dsi };
++
++	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x28, 0x00);
++	mipi_dsi_msleep(&dsi_ctx, 20);
++	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x10, 0x00);
++	mipi_dsi_msleep(&dsi_ctx, 100);
++
++	return dsi_ctx.accum_err;
++}
++
++static int sofef03f_prepare(struct drm_panel *panel)
++{
++	struct sofef03f *ctx = to_sofef03f(panel);
++	int ret;
++
++	ret = regulator_bulk_enable(ARRAY_SIZE(sofef03f_supplies), ctx->supplies);
++	if (ret < 0)
++		return ret;
++
++	/* vendor supply entry asks for a 20ms post-on delay */
++	usleep_range(20000, 21000);
++
++	sofef03f_reset(ctx);
++
++	ret = sofef03f_on(ctx);
++	if (ret < 0) {
++		gpiod_set_value_cansleep(ctx->reset_gpio, 1);
++		regulator_bulk_disable(ARRAY_SIZE(sofef03f_supplies), ctx->supplies);
++	}
++
++	return ret;
++}
++
++static int sofef03f_enable(struct drm_panel *panel)
++{
++	struct sofef03f *ctx = to_sofef03f(panel);
++	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
++
++	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
++
++	return dsi_ctx.accum_err;
++}
++
++static int sofef03f_disable(struct drm_panel *panel)
++{
++	struct sofef03f *ctx = to_sofef03f(panel);
++
++	sofef03f_off(ctx);
++
++	return 0;
++}
++
++static int sofef03f_unprepare(struct drm_panel *panel)
++{
++	struct sofef03f *ctx = to_sofef03f(panel);
++
++	regulator_bulk_disable(ARRAY_SIZE(sofef03f_supplies), ctx->supplies);
++
++	return 0;
++}
++
++static const struct drm_display_mode sofef03f_mode = {
++	.clock = (1080 + 52 + 24 + 24) * (2400 + 1208 + 4 + 8) * 60 / 1000,
++
++	.hdisplay = 1080,
++	.hsync_start = 1080 + 52,
++	.hsync_end = 1080 + 52 + 24,
++	.htotal = 1080 + 52 + 24 + 24,
++
++	.vdisplay = 2400,
++	.vsync_start = 2400 + 1208,
++	.vsync_end = 2400 + 1208 + 4,
++	.vtotal = 2400 + 1208 + 4 + 8,
++
++	.width_mm = 68,
++	.height_mm = 145,
++
++	.type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED,
++};
++
++static int sofef03f_get_modes(struct drm_panel *panel,
++			      struct drm_connector *connector)
++{
++	return drm_connector_helper_get_modes_fixed(connector, &sofef03f_mode);
++}
++
++static const struct drm_panel_funcs sofef03f_panel_funcs = {
++	.prepare = sofef03f_prepare,
++	.enable = sofef03f_enable,
++	.disable = sofef03f_disable,
++	.unprepare = sofef03f_unprepare,
++	.get_modes = sofef03f_get_modes,
++};
++
++static int sofef03f_bl_update_status(struct backlight_device *bl)
++{
++	struct mipi_dsi_device *dsi = bl_get_data(bl);
++	u16 brightness = (u16)backlight_get_brightness(bl);
++	int ret;
++
++	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
++	ret = mipi_dsi_dcs_set_display_brightness_large(dsi, brightness);
++	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
++
++	return ret;
++}
++
++static const struct backlight_ops sofef03f_bl_ops = {
++	.update_status = sofef03f_bl_update_status,
++};
++
++static struct backlight_device *sofef03f_create_backlight(struct mipi_dsi_device *dsi)
++{
++	struct device *dev = &dsi->dev;
++	const struct backlight_properties props = {
++		.type = BACKLIGHT_RAW,
++		.brightness = 1024,
++		.max_brightness = 2047,
++	};
++
++	return devm_backlight_device_register(dev, dev_name(dev), dev, dsi,
++					      &sofef03f_bl_ops, &props);
++}
++
++static const u8 sofef03f_ranges[15][3] = {
++	{ 0, 4, 2 },
++	{ 0, 4, 0 },
++	{ 1, 5, 0 },
++	{ 1, 6, 62 },
++	{ 3, 7, 60 },
++	{ 3, 7, 58 },
++	{ 3, 7, 56 },
++	{ 3, 8, 56 },
++	{ 3, 9, 56 },
++	{ 3, 10, 54 },
++	{ 5, 11, 54 },
++	{ 5, 12, 52 },
++	{ 5, 13, 52 },
++	{ 7, 13, 52 },
++	{ 13, 15, 52 },
++};
++
++static int sofef03f_probe(struct mipi_dsi_device *dsi)
++{
++	struct device *dev = &dsi->dev;
++	struct sofef03f *ctx;
++	int ret;
++
++	ctx = devm_drm_panel_alloc(dev, struct sofef03f, panel,
++				   &sofef03f_panel_funcs, DRM_MODE_CONNECTOR_DSI);
++	if (IS_ERR(ctx))
++		return PTR_ERR(ctx);
++
++	ret = devm_regulator_bulk_get_const(dev, ARRAY_SIZE(sofef03f_supplies),
++					    sofef03f_supplies, &ctx->supplies);
++	if (ret)
++		return dev_err_probe(dev, ret, "Failed to get regulators\n");
++
++	ctx->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(ctx->reset_gpio))
++		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
++				     "Failed to get reset-gpios\n");
++
++	ctx->dsi = dsi;
++	mipi_dsi_set_drvdata(dsi, ctx);
++
++	dsi->lanes = 4;
++	dsi->format = MIPI_DSI_FMT_RGB888;
++	/* command mode: no MIPI_DSI_MODE_VIDEO */
++	dsi->mode_flags = MIPI_DSI_CLOCK_NON_CONTINUOUS | MIPI_DSI_MODE_LPM;
++
++	/* DSC is mandatory on this panel */
++	ctx->dsc.dsc_version_major = 1;
++	ctx->dsc.dsc_version_minor = 1;
++	ctx->dsc.bits_per_component = 8;
++	ctx->dsc.line_buf_depth = 9;
++	ctx->dsc.bits_per_pixel = 128; /* 4 fractional bits */
++	ctx->dsc.block_pred_enable = true;
++	ctx->dsc.convert_rgb = true;
++	ctx->dsc.simple_422 = false;
++	ctx->dsc.vbr_enable = false;
++	ctx->dsc.pic_width = 1080;
++	ctx->dsc.pic_height = 2400;
++	ctx->dsc.slice_width = 540;
++	ctx->dsc.slice_height = 30;
++	ctx->dsc.slice_count = 2;
++	ctx->dsc.slice_chunk_size = 540;
++	ctx->dsc.initial_xmit_delay = 512;
++	ctx->dsc.initial_dec_delay = 526;
++	ctx->dsc.initial_scale_value = 32;
++	ctx->dsc.scale_increment_interval = 739;
++	ctx->dsc.scale_decrement_interval = 7;
++	ctx->dsc.first_line_bpg_offset = 12;
++	ctx->dsc.nfl_bpg_offset = 848;
++	ctx->dsc.slice_bpg_offset = 868;
++	ctx->dsc.initial_offset = 6144;
++	ctx->dsc.final_offset = 4336;
++	ctx->dsc.flatness_min_qp = 3;
++	ctx->dsc.flatness_max_qp = 12;
++	ctx->dsc.rc_model_size = 8192;
++	ctx->dsc.rc_edge_factor = 6;
++	ctx->dsc.rc_quant_incr_limit0 = 11;
++	ctx->dsc.rc_quant_incr_limit1 = 11;
++	ctx->dsc.rc_tgt_offset_high = 3;
++	ctx->dsc.rc_tgt_offset_low = 3;
++
++	/* rc_buf_thresh[] and rc_range_params[] come straight from the PPS */
++	ctx->dsc.rc_buf_thresh[0] = 14;
++	ctx->dsc.rc_buf_thresh[1] = 28;
++	ctx->dsc.rc_buf_thresh[2] = 42;
++	ctx->dsc.rc_buf_thresh[3] = 56;
++	ctx->dsc.rc_buf_thresh[4] = 70;
++	ctx->dsc.rc_buf_thresh[5] = 84;
++	ctx->dsc.rc_buf_thresh[6] = 98;
++	ctx->dsc.rc_buf_thresh[7] = 105;
++	ctx->dsc.rc_buf_thresh[8] = 112;
++	ctx->dsc.rc_buf_thresh[9] = 119;
++	ctx->dsc.rc_buf_thresh[10] = 121;
++	ctx->dsc.rc_buf_thresh[11] = 123;
++	ctx->dsc.rc_buf_thresh[12] = 125;
++	ctx->dsc.rc_buf_thresh[13] = 126;
++
++	for (int i = 0; i < 15; i++) {
++		/* min_qp, max_qp, bpg_offset */
++		ctx->dsc.rc_range_params[i].range_min_qp = sofef03f_ranges[i][0];
++		ctx->dsc.rc_range_params[i].range_max_qp = sofef03f_ranges[i][1];
++		ctx->dsc.rc_range_params[i].range_bpg_offset = sofef03f_ranges[i][2];
++	}
++
++	dsi->dsc = &ctx->dsc;
++
++	ctx->panel.prepare_prev_first = true;
++
++	ctx->panel.backlight = sofef03f_create_backlight(dsi);
++	if (IS_ERR(ctx->panel.backlight))
++		return dev_err_probe(dev, PTR_ERR(ctx->panel.backlight),
++				     "Failed to create backlight\n");
++
++	drm_panel_add(&ctx->panel);
++
++	ret = mipi_dsi_attach(dsi);
++	if (ret < 0) {
++		drm_panel_remove(&ctx->panel);
++		return ret;
++	}
++
++	return 0;
++}
++
++static void sofef03f_remove(struct mipi_dsi_device *dsi)
++{
++	struct sofef03f *ctx = mipi_dsi_get_drvdata(dsi);
++	int ret;
++
++	ret = mipi_dsi_detach(dsi);
++	if (ret < 0)
++		dev_err(&dsi->dev, "Failed to detach from DSI host: %d\n", ret);
++
++	drm_panel_remove(&ctx->panel);
++}
++
++static const struct of_device_id sofef03f_of_match[] = {
++	{ .compatible = "samsung,sofef03f" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, sofef03f_of_match);
++
++static struct mipi_dsi_driver sofef03f_driver = {
++	.probe = sofef03f_probe,
++	.remove = sofef03f_remove,
++	.driver = {
++		.name = "panel-samsung-sofef03f",
++		.of_match_table = sofef03f_of_match,
++	},
++};
++module_mipi_dsi_driver(sofef03f_driver);
++
++MODULE_AUTHOR("hotdogb bring-up");
++MODULE_DESCRIPTION("DRM driver for Samsung SOFEF03F M FHD DSC panel");
++MODULE_LICENSE("GPL");
+
+-- 
+2.43.0

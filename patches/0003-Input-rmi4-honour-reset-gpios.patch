@@ -1,0 +1,68 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hotdogb bring-up <noreply@example.com>
+Date: Thu, 29 Oct 2026 23:20:00 +0800
+Subject: [PATCH 3/6] Input: rmi4 - honour the reset-gpios property
+
+The RMI4 I2C transport reads syna,reset-delay-ms but never touches the
+reset line, so controllers that are held in reset by the bootloader never
+answer on the bus.  Several existing device trees already describe
+reset-gpios, and the binding documents it.
+
+Request the optional GPIO and pulse it low/high at probe time, using
+syna,reset-delay-ms as the post-release delay.  Boards without the
+property behave exactly as before.
+
+Signed-off-by: hotdogb bring-up <noreply@example.com>
+---
+ drivers/input/rmi4/rmi_i2c.c | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/input/rmi4/rmi_i2c.c b/drivers/input/rmi4/rmi_i2c.c
+index 3c0c5fd44..7815274b0 100644
+--- a/drivers/input/rmi4/rmi_i2c.c
++++ b/drivers/input/rmi4/rmi_i2c.c
+@@ -4,6 +4,7 @@
+  * Copyright (c) 2011 Unixphere
+  */
+ 
++#include <linux/gpio/consumer.h>
+ #include <linux/i2c.h>
+ #include <linux/rmi.h>
+ #include <linux/of.h>
+@@ -39,6 +40,7 @@ struct rmi_i2c_xport {
+ 	size_t tx_buf_size;
+ 
+ 	struct regulator_bulk_data supplies[2];
++	struct gpio_desc *reset_gpio;
+ 	u32 startup_delay;
+ };
+ 
+@@ -251,6 +253,25 @@ static int rmi_i2c_probe(struct i2c_client *client)
+ 
+ 	msleep(rmi_i2c->startup_delay);
+ 
++	rmi_i2c->reset_gpio = devm_gpiod_get_optional(&client->dev, "reset",
++						      GPIOD_OUT_HIGH);
++	if (IS_ERR(rmi_i2c->reset_gpio))
++		return dev_err_probe(&client->dev, PTR_ERR(rmi_i2c->reset_gpio),
++				     "failed to get reset gpio\n");
++
++	if (rmi_i2c->reset_gpio) {
++		u32 reset_delay = 100;
++
++		of_property_read_u32(client->dev.of_node, "syna,reset-delay-ms",
++				     &reset_delay);
++
++		/* active low: 0 asserts, 1 releases */
++		gpiod_set_value_cansleep(rmi_i2c->reset_gpio, 0);
++		msleep(20);
++		gpiod_set_value_cansleep(rmi_i2c->reset_gpio, 1);
++		msleep(reset_delay);
++	}
++
+ 	rmi_i2c->client = client;
+ 	mutex_init(&rmi_i2c->page_mutex);
+ 
+
+-- 
+2.43.0

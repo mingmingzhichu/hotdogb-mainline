@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: hotdogb bring-up <noreply@example.com>
+Date: Thu, 29 Oct 2026 23:20:00 +0800
+Subject: [PATCH 4/6] arm64: dts: qcom: sm8150-oneplus-hotdogb: fix the board compatible
+
+The compatible string spells the board "hotdobg".  It should be
+"hotdogb", which is what the OnePlus 7T is called everywhere else: the
+device tree filename, the bootloader codename and the mainline board
+name.
+
+This has no functional impact today because nothing matches on it, but
+it would break any driver or userspace lookup that does.
+
+Signed-off-by: hotdogb bring-up <noreply@example.com>
+---
+ arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts | 2 +-
+ 1 file changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts b/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
+--- a/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
+@@ -11,7 +11,7 @@
+ 
+ / {
+ 	model = "OnePlus 7T";
+-	compatible = "oneplus,hotdobg", "oneplus,oneplus7", "qcom,sm8150";
++	compatible = "oneplus,hotdogb", "oneplus,oneplus7", "qcom,sm8150";
+ 
+ 	aliases {
+ 		display0 = &framebuffer0;
+
+-- 
+2.43.0
