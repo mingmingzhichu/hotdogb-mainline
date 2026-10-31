@@ -1,0 +1,106 @@
+#!/bin/busybox.static sh
+# Minimal userspace for OnePlus 7T (hotdogb) mainline.
+#
+#   1. mount proc/sys/dev/debugfs
+#   2. bind a CDC-ACM USB gadget (1d6b:0104) so the host gets COMx
+#   3. serve a line-oriented command protocol on /dev/ttyGS0
+#   4. (background) find the vendor firmware partition and wire up Wi-Fi
+#
+# Protocol (what hd_cmd.ps1 expects):
+#   device -> host : "__R__"   ready for a command
+#   device -> host : "__B__"   command output starts
+#   device -> host : "__E__"   command output ends
+
+/bin/busybox.static --install -s /bin 2>/dev/null
+
+mount -t proc proc /proc 2>/dev/null
+mount -t sysfs sysfs /sys 2>/dev/null
+mount -t devtmpfs devtmpfs /dev 2>/dev/null
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts 2>/dev/null
+mkdir -p /sys/kernel/debug
+mount -t debugfs none /sys/kernel/debug 2>/dev/null
+
+say() { echo "<6>init: $*" > /dev/kmsg 2>/dev/null; }
+
+say "userspace up"
+
+# ------------------------------------------------------------- usb drive -----
+# A RAM-backed FAT image, exported to the host as a USB mass-storage LUN, so
+# firmware blobs can be dropped in at USB speed instead of 15 KB/s over the ACM
+# console.  Nothing on the real partitions is touched.
+LUNIMG=/tmp/lun.img
+LUN_OK=
+dd if=/dev/zero of="$LUNIMG" bs=1M count=220 2>/dev/null
+if /bin/busybox.static mkfs.vfat "$LUNIMG" >/dev/null 2>&1; then
+	LUN_OK=1
+	say "lun image ready"
+fi
+
+# ---------------------------------------------------------------- serial -----
+# Nothing below may block this: the console is the only way to debug the board.
+n=0
+while [ $n -lt 60 ] && [ -z "$(ls /sys/class/udc 2>/dev/null)" ]; do
+	sleep 1
+	n=$((n + 1))
+done
+UDC=$(ls /sys/class/udc 2>/dev/null | head -1)
+
+if [ -n "$UDC" ]; then
+	mount -t configfs none /sys/kernel/config 2>/dev/null
+	G=/sys/kernel/config/usb_gadget/g1
+	mkdir -p "$G"
+	# Linux Foundation CDC-ACM IDs: Windows binds usbser.sys and creates COMx.
+	echo 0x1d6b > "$G/idVendor"
+	echo 0x0104 > "$G/idProduct"
+	echo 0x0100 > "$G/bcdDevice"
+	echo 0x0200 > "$G/bcdUSB"
+	mkdir -p "$G/strings/0x409"
+	echo "dde12ac6" > "$G/strings/0x409/serialnumber"
+	echo "OnePlus" > "$G/strings/0x409/manufacturer"
+	echo "hotdogb mainline" > "$G/strings/0x409/product"
+	mkdir -p "$G/configs/c.1/strings/0x409"
+	echo "acm" > "$G/configs/c.1/strings/0x409/configuration"
+	mkdir -p "$G/functions/acm.usb0"
+	ln -sf "$G/functions/acm.usb0" "$G/configs/c.1/" 2>/dev/null
+	if [ -n "$LUN_OK" ]; then
+		mkdir -p "$G/functions/mass_storage.0"
+		echo "$LUNIMG" > "$G/functions/mass_storage.0/lun.0/file"
+		echo 1 > "$G/functions/mass_storage.0/lun.0/removable"
+		ln -sf "$G/functions/mass_storage.0" "$G/configs/c.1/" 2>/dev/null
+	fi
+	echo "$UDC" > "$G/UDC"
+	say "gadget bound to $UDC"
+else
+	say "no UDC found, serial console unavailable"
+fi
+
+if [ -c /dev/ttyGS0 ]; then
+	(
+		sleep 1
+		exec 3<> /dev/ttyGS0
+		printf '\r\n*** hotdogb mainline console ***\r\n' >&3
+		printf 'one command per line, output ends with __E__\r\n' >&3
+		while :; do
+			printf '__R__\r\n' >&3
+			line=""
+			IFS= read -r line <&3 || { sleep 1; continue; }
+			[ -z "$line" ] && continue
+			case "$line" in
+			exit|quit) break ;;
+			esac
+			printf '__B__\r\n' >&3
+			/bin/busybox.static sh -c "$line" >&3 2>&1
+			printf '__E__\r\n' >&3
+		done
+	) &
+fi
+
+# ------------------------------------------------------------------------------
+# Wi-Fi / modem bring-up is parked; the working values are recorded in the
+# bring-up notes.  Nothing here may block the console.
+
+# PID 1 must never exit.
+while :; do
+	sleep 3600
+done

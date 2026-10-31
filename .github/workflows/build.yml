@@ -14,15 +14,21 @@ on:
         description: Kernel commit to check out
         required: false
         default: 8e126dbc4044ef2cec3ebe5754ddb05faa554af6
+      busybox_version:
+        description: BusyBox version used for the initramfs
+        required: false
+        default: 1.36.1
 
 env:
   KERNEL_REPO: ${{ inputs.kernel_repo || 'https://gitlab.postmarketos.org/soc/qualcomm-sm8150/linux.git' }}
   KERNEL_COMMIT: ${{ inputs.kernel_commit || '8e126dbc4044ef2cec3ebe5754ddb05faa554af6' }}
+  BUSYBOX_VERSION: ${{ inputs.busybox_version || '1.36.1' }}
   CROSS: aarch64-linux-gnu-
+  CMDS: "clk_ignore_unused loglevel=7 panic=0 printk.time=1 ramoops.max_reason=5 log_buf_len=4M"
 
 jobs:
   build:
-    name: arm64 Image + hotdogb dtb
+    name: arm64 Image + dtb + boot.img
     runs-on: ubuntu-24.04
     timeout-minutes: 120
 
@@ -36,7 +42,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential bc bison flex libssl-dev libelf-dev \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            device-tree-compiler python3
+            libc6-dev-arm64-cross \
+            device-tree-compiler python3 cpio wget bzip2
 
       - name: Fetch the pinned kernel tree
         run: |
@@ -63,20 +70,41 @@ jobs:
           make ARCH=arm64 CROSS_COMPILE=$CROSS olddefconfig
           grep -E '^CONFIG_(DRM_PANEL_SAMSUNG_SOFEF03F|DRM_MSM|INPUT_EVDEV|KEYBOARD_GPIO)=' .config
 
-      - name: Build
+      - name: Build the kernel and the DTB
         run: |
           cd linux
           make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=$CROSS \
             Image qcom/sm8150-oneplus-hotdogb.dtb
 
-      - name: Collect artifacts
+      - name: Build a static aarch64 busybox
+        run: |
+          wget -q "https://busybox.net/downloads/busybox-${BUSYBOX_VERSION}.tar.bz2"
+          tar xf "busybox-${BUSYBOX_VERSION}.tar.bz2"
+          cd "busybox-${BUSYBOX_VERSION}"
+          make ARCH=arm64 CROSS_COMPILE=$CROSS defconfig
+          sed -i 's/^# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
+          make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=$CROSS
+          file busybox
+
+      - name: Assemble the artifacts
         run: |
           mkdir -p out
           cp linux/arch/arm64/boot/Image out/Image
           cp linux/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dtb out/
           cp linux/.config out/config
-          ls -l out
+          sh tools/build_initramfs.sh "busybox-${BUSYBOX_VERSION}/busybox" out/initramfs.cpio.gz
+
+      - name: Patch the Image header and pack boot.img
+        run: |
+          python3 tools/patch_image_header.py --image out/Image --output out/Image.patched
+          python3 tools/mkbootimg_v2.py \
+            --kernel out/Image.patched \
+            --ramdisk out/initramfs.cpio.gz \
+            --dtb out/sm8150-oneplus-hotdogb.dtb \
+            --cmdline "$CMDS" \
+            --output out/boot-hotdogb.img
           sha256sum out/* | tee out/SHA256SUMS
+          ls -l out
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

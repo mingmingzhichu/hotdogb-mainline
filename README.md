@@ -18,6 +18,7 @@ docs/       实现说明、参数来源、排查方法
 reference/  从原厂 dtbo 提取的面板节点原文（数据来源，仅供对照）
 firmware/   GPU 需要的三份固件（Adreno 640：SQE / GMU / ZAP），含部署说明
 tools/      从原厂节点重新生成面板驱动的脚本
+initramfs/  最小 init（串口 gadget + 命令服务），CI 用它打包 boot.img
 boot/       32 字节空 DTBO（跑主线前必须刷，见"启动前"）
 ```
 
