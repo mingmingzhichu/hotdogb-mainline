@@ -122,3 +122,22 @@ fastboot flash boot boot.img         # 内核 + DTB 打包在 boot 里
 ## 许可证
 
 补丁里的内核代码（驱动、rmi4、Kconfig）是 `GPL-2.0-only`；binding 是 `GPL-2.0-only OR BSD-2-Clause`；DTS 沿用原文件头，`BSD-3-Clause`。补丁新增和修改的文件里都带 SPDX 头，不用另外加。
+
+## boot.img 的 cmdline
+
+CI 与本地打包用的都是同一条：
+
+```
+clk_ignore_unused loglevel=7 panic=0 printk.time=1 ramoops.max_reason=5 log_buf_len=4M
+```
+
+- `clk_ignore_unused`：不开这个，没被驱动认领的时钟会在 late init 被关掉，DSI/DPU 会黑屏
+- `loglevel=7` + `printk.time=1`：串口/屏幕直接看到完整的引导日志
+- `panic=0`：出错时停在现场而不是重启，方便抓 dmesg
+- `ramoops.max_reason=5`：保留完整的 ramoops 记录
+- `log_buf_len=4M`：环形缓冲区太小会把早期的显示/PCIe 日志冲掉
+
+它在 `.github/workflows/build.yml` 的 `env.CMDS` 里定义，由 `mkbootimg_v2.py --cmdline` 带进
+boot 镜像头；本地打包时可以直接改这一条。
+
+## 踩过的坑
