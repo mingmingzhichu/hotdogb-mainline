@@ -12,7 +12,7 @@
 ## 目录
 
 ```
-patches/    6 个补丁，按顺序 git am 即可
+patches/    5 个补丁，按顺序 git am 即可
 configs/    内核配置片段（merge_config.sh 用）
 docs/       实现说明、参数来源、排查方法
 reference/  从原厂 dtbo 提取的面板节点原文（数据来源，仅供对照）

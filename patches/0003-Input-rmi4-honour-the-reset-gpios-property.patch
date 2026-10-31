@@ -1,21 +1,19 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: hotdogb bring-up <noreply@example.com>
-Date: Thu, 29 Oct 2026 23:20:00 +0800
-Subject: [PATCH 3/6] Input: rmi4 - honour the reset-gpios property
+From d4fed328cf1a6f70bcfc3e457db0eb10ef240153 Mon Sep 17 00:00:00 2001
+From: mingmingzhichu <lihaoyu0717@outlook.com>
+Date: Sat, 31 Oct 2026 16:36:48 +0800
+Subject: [PATCH 3/5] Input: rmi4 - honour the reset-gpios property
 
-The RMI4 I2C transport reads syna,reset-delay-ms but never touches the
-reset line, so controllers that are held in reset by the bootloader never
-answer on the bus.  Several existing device trees already describe
-reset-gpios, and the binding documents it.
+The RMI4 I2C transport reads syna,reset-delay-ms but never touches the reset
+line, so controllers that are held in reset by the bootloader never answer on
+the bus.  Several existing device trees already describe reset-gpios, and the
+binding documents it.
 
 Request the optional GPIO and pulse it low/high at probe time, using
-syna,reset-delay-ms as the post-release delay.  Boards without the
-property behave exactly as before.
-
-Signed-off-by: hotdogb bring-up <noreply@example.com>
+syna,reset-delay-ms as the post-release delay.  Boards without the property
+behave exactly as before.
 ---
  drivers/input/rmi4/rmi_i2c.c | 21 +++++++++++++++++++++
- 1 file changed, 21 insertions(+), 0 deletions(-)
+ 1 file changed, 21 insertions(+)
 
 diff --git a/drivers/input/rmi4/rmi_i2c.c b/drivers/input/rmi4/rmi_i2c.c
 index 3c0c5fd44..7815274b0 100644
@@ -63,6 +61,6 @@ index 3c0c5fd44..7815274b0 100644
  	rmi_i2c->client = client;
  	mutex_init(&rmi_i2c->page_mutex);
  
-
 -- 
-2.43.0
+2.47.3
+

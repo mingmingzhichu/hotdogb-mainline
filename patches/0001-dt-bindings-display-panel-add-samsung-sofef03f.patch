@@ -1,20 +1,14 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: hotdogb bring-up <noreply@example.com>
-Date: Thu, 29 Oct 2026 23:20:00 +0800
-Subject: [PATCH 1/6] dt-bindings: display: panel: add Samsung SOFEF03F
+From c01023ad131f16f79d63ed953bfae469dc309559 Mon Sep 17 00:00:00 2001
+From: mingmingzhichu <lihaoyu0717@outlook.com>
+Date: Sat, 31 Oct 2026 16:36:38 +0800
+Subject: [PATCH 1/5] dt-bindings: display: panel: add Samsung SOFEF03F
 
-Document the Samsung SOFEF03F M FHD panel found in the OnePlus 7T
-(hotdogb).  It is a 1080x2400 command mode AMOLED driven over four DSI
-lanes with VESA DSC compression.
-
-Only the supplies that mainline can actually control are described: the
-panel I/O rail plus the reset and tearing effect lines.  The lab/ibb
-bias rails come from the PM8150L LCDB block and are not modelled yet.
-
-Signed-off-by: hotdogb bring-up <noreply@example.com>
+Document the Samsung SOFEF03F M FHD command mode panel with DSC as found on
+the OnePlus 7T (hotdogb).
 ---
- Documentation/devicetree/bindings/display/panel/samsung,sofef03f.yaml | 71 ++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 71 insertions(+), 0 deletions(-)
+ .../display/panel/samsung,sofef03f.yaml       | 71 +++++++++++++++++++
+ 1 file changed, 71 insertions(+)
+ create mode 100644 Documentation/devicetree/bindings/display/panel/samsung,sofef03f.yaml
 
 diff --git a/Documentation/devicetree/bindings/display/panel/samsung,sofef03f.yaml b/Documentation/devicetree/bindings/display/panel/samsung,sofef03f.yaml
 new file mode 100644
@@ -36,7 +30,7 @@ index 000000000..ef4e8a8df
 +  DSI lanes and requires VESA DSC compression (two 540 pixel slices).
 +
 +maintainers:
-+  - TODO <todo@example.com>
++  - mingmingzhichu <lihaoyu0717@outlook.com>
 +
 +allOf:
 +  - $ref: panel-common.yaml#
@@ -93,6 +87,6 @@ index 000000000..ef4e8a8df
 +        };
 +    };
 +...
-
 -- 
-2.43.0
+2.47.3
+

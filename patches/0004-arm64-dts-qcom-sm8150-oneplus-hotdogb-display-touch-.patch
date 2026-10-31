@@ -1,0 +1,400 @@
+From 6c206f4c260ea87b29a08c13666fd57cb3dcddb8 Mon Sep 17 00:00:00 2001
+From: mingmingzhichu <lihaoyu0717@outlook.com>
+Date: Sat, 31 Oct 2026 16:36:53 +0800
+Subject: [PATCH 4/5] arm64: dts: qcom: sm8150-oneplus-hotdogb: display, touch,
+ keys, battery
+
+Enable the display path (DPU, DSI0, 7nm PHY and the Samsung SOFEF03F panel),
+the Synaptics S3706 touchscreen on QUPv3 SE17, the PM8150 volume keys and the
+PM8150B fuel gauge.
+
+The GPU node stays disabled: msm_dpu binds it as a component, the node has no
+working clock/power-domain wiring and there is no zap shader on the device, so
+enabling it takes the display down with it.
+
+The SMB5 charger driver is left disabled as well: reading POWER_PATH_STATUS
+wedges the SPMI bus on this board.  Charging keeps running with the hardware
+defaults and the fuel gauge still reports capacity, voltage, current and
+temperature.
+---
+ .../boot/dts/qcom/sm8150-oneplus-hotdogb.dts  | 342 ++++++++++++++++--
+ 1 file changed, 311 insertions(+), 31 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts b/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
+index 7ba966a83..45bc12d8d 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
+@@ -7,53 +7,39 @@
+ 
+ #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+ #include <dt-bindings/gpio/gpio.h>
++#include <dt-bindings/interrupt-controller/irq.h>
+ #include "sm8150-oneplus-common.dtsi"
+ 
+ / {
+ 	model = "OnePlus 7T";
+-	compatible = "oneplus,hotdobg", "oneplus,oneplus7", "qcom,sm8150";
++	compatible = "oneplus,hotdogb", "oneplus,oneplus7", "qcom,sm8150";
+ 
+-	aliases {
+-		display0 = &framebuffer0;
+-	};
++	/* Qualcomm bootloader (ABL) DTB matching IDs for hotdogb */
++	qcom,msm-id = <339 0x20000>;	/* SM8150 v2.0 (dmesg: SM8150 V2) */
++	qcom,board-id = <8 0>;		/* MTP, subtype 0 */
+ 
+ 	chosen {
+ 		#address-cells = <2>;
+-        #size-cells = <2>;
+-        ranges;
+-		stdout-path = "display0";
+-
+-		/*
+-         * hack: Use framebuffer setup by the bootloader for simplefb.
+-         * the address is taken from the bootloader config (strings xbl.img | grep "Display Reserved")
+-         */
+-        framebuffer0: framebuffer@9C000000 {
+-            compatible = "simple-framebuffer";
+-            reg = <0 0x9C000000 0 (1080 * 2400 * 4)>;
+-            width = <1080>;
+-            height = <2400>;
+-            stride = <(1080 * 4)>;
+-            format = "a8r8g8b8";
+-            status = "okay";
+-
+-        };
++		#size-cells = <2>;
++		ranges;
++
+ 	};
+ 
+ 	reserved-memory {
+-	// hack: Bootloader framebuffer memory region
+-        fb_mem: memory@a1a10000 {
+-            compatible = "removed-dma-pool";
+-            no-map;
+-            reg = <0 0x9C000000 0 (1080 * 2400 * 4)>;
+-        };
++		/* Bootloader framebuffer memory region */
++		fb_mem: memory@9c000000 {
++			compatible = "removed-dma-pool";
++			reg = <0 0x9c000000 0 (1080 * 2400 * 4)>;
++		};
+ 
+ 		removed_region: removed-region@89d00000 {
+ 			reg = <0x0 0x89d00000 0x0 0x1a00000>;
+ 			no-map;
+ 		};
+-		ramoops: ramoops@0xA9800000 {
++
++		ramoops: ramoops@a9800000 {
+ 			compatible = "ramoops";
+-			reg = <0 0xA9800000 0 0x400000>;
++			reg = <0 0xa9800000 0 0x400000>;
+ 			record-size = <0x40000>;
+ 			console-size = <0x40000>;
+ 			ftrace-size = <0x40000>;
+@@ -62,4 +48,298 @@ ramoops: ramoops@0xA9800000 {
+ 			ecc-size = <0x0>;
+ 		};
+ 	};
+-};
+\ No newline at end of file
++};
++
++/*
++ * Display: DPU 5.0 + DSI0 + 7nm PHY + Samsung SOFEF03F M FHD panel.
++ *
++ * The panel is a command mode AMOLED with DSC (1080x2400).  lab/ibb bias
++ * rails come from the PM8150L LCDB block, which mainline cannot control, so
++ * we depend on the bootloader having left them enabled.
++ */
++&mdss {
++	status = "okay";
++};
++
++&mdss_dsi0 {
++	vdda-supply = <&vreg_l3c_1p2>;
++	status = "okay";
++
++	/*
++	 * A/B test: TE muxing disabled.  Mainline DPU defaults to
++	 * DPU_VSYNC_SOURCE_GPIO_0 ("mdp_vsync_p") in command mode, so if the
++	 * panel never emits TE the kickoff never happens.  Re-enable once the
++	 * TE path is proven.
++	 */
++	/* pinctrl-names = "default"; */
++	/* pinctrl-0 = <&panel_te_pin>; */
++
++	panel@0 {
++		compatible = "samsung,sofef03f";
++		reg = <0>;
++
++		vddio-supply = <&vreg_l14a_1p8>;
++
++		reset-gpios = <&tlmm 6 GPIO_ACTIVE_LOW>;
++		te-gpios = <&tlmm 8 GPIO_ACTIVE_LOW>;
++
++		pinctrl-names = "default";
++		pinctrl-0 = <&panel_reset_pin>;
++
++		port {
++			panel_in: endpoint {
++				remote-endpoint = <&mdss_dsi0_out>;
++			};
++		};
++	};
++};
++
++&mdss_dsi0_out {
++	data-lanes = <0 1 2 3>;
++	remote-endpoint = <&panel_in>;
++};
++
++&mdss_dsi0_phy {
++	vdds-supply = <&vreg_l5a_0p875>;
++	status = "okay";
++};
++
++&tlmm {
++	panel_reset_pin: panel-reset-state {
++		pins = "gpio6";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++		output-low;
++		power-source = <1>;
++	};
++
++	panel_te_pin: panel-te-state {
++		pins = "gpio8";
++		function = "mdp_vsync";
++		drive-strength = <2>;
++		bias-pull-down;
++	};
++};
++
++/*
++ * Touchscreen: Synaptics S3706 (RMI4) on QUPv3 SE17.
++ *
++ * Stock wiring (from the vendor dtbo fragment targeting qupv3_se17_i2c):
++ *   reg 0x20, IRQ gpio122 (level low), reset gpio54, 1.8V load-switch
++ *   enable gpio119, analogue supply PM8150 L17 (3.0V).
++ */
++/ {
++	tp_1v8: regulator-tp-1v8 {
++		compatible = "regulator-fixed";
++		regulator-name = "tp_1v8";
++		regulator-min-microvolt = <1800000>;
++		regulator-max-microvolt = <1800000>;
++		gpio = <&tlmm 119 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		regulator-boot-on;
++	};
++};
++
++/* SE17 lives inside QUPv3 wrapper 2; enabling the SE alone is not enough. */
++&qupv3_id_2 {
++	status = "okay";
++};
++
++&gpi_dma2 {
++	status = "okay";
++};
++
++&i2c17 {
++	status = "okay";
++	clock-frequency = <400000>;
++
++	touchscreen@20 {
++		compatible = "syna,rmi4-i2c";
++		reg = <0x20>;
++
++		interrupt-parent = <&tlmm>;
++		interrupts = <122 IRQ_TYPE_LEVEL_LOW>;
++
++		vdd-supply = <&vreg_l17a_3p0>;
++		vio-supply = <&tp_1v8>;
++
++		reset-gpios = <&tlmm 54 GPIO_ACTIVE_LOW>;
++
++		syna,reset-delay-ms = <200>;
++		syna,startup-delay-ms = <100>;
++
++		pinctrl-names = "default";
++		pinctrl-0 = <&tp_irq_pin &tp_reset_pin>;
++
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		rmi4-f01@1 {
++			reg = <0x01>;
++			syna,nosleep-mode = <1>;
++		};
++
++		rmi4-f12@12 {
++			reg = <0x12>;
++			syna,sensor-type = <1>;
++			syna,rezero-wait-ms = <200>;
++			syna,clip-x-high = <1079>;
++			syna,clip-y-high = <2339>;
++		};
++	};
++};
++
++&tlmm {
++	tp_irq_pin: tp-irq-state {
++		pins = "gpio122";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-pull-up;
++	};
++
++	tp_reset_pin: tp-reset-state {
++		pins = "gpio54";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-disable;
++		output-high;
++	};
++};
++
++/*
++ * Volume keys.  They are wired to the PM8150 PMIC GPIOs (1.8V rail, PMIC
++ * pull-up, active low), not to the PON resin input that the shared OnePlus
++ * dtsi assumes.  Measured on hardware: gpio6 is volume up, gpio7 is volume
++ * down.
++ */
++/ {
++	gpio-keys {
++		compatible = "gpio-keys";
++		pinctrl-names = "default";
++		pinctrl-0 = <&key_vol_up_default &key_vol_down_default>;
++
++		key-vol-up {
++			label = "Volume Up";
++			gpios = <&pm8150_gpios 6 GPIO_ACTIVE_LOW>;
++			linux,code = <KEY_VOLUMEUP>;
++			debounce-interval = <15>;
++		};
++
++		key-vol-down {
++			label = "Volume Down";
++			gpios = <&pm8150_gpios 7 GPIO_ACTIVE_LOW>;
++			linux,code = <KEY_VOLUMEDOWN>;
++			debounce-interval = <15>;
++		};
++	};
++};
++
++&pm8150_gpios {
++	key_vol_up_default: key-vol-up-state {
++		pins = "gpio6";
++		function = "normal";
++		input-enable;
++		bias-pull-up;
++	};
++
++	key_vol_down_default: key-vol-down-state {
++		pins = "gpio7";
++		function = "normal";
++		input-enable;
++		bias-pull-up;
++	};
++};
++
++/*
++ * Battery and charging: PM8150B SMB5 charger + PM8150B gen4 fuel gauge.
++ *
++ * Numbers come from the stock DTBO profile (qcom,OP_4000mAh):
++ *   max voltage 4370 mV, fast charge 3000 mA, design capacity ~4000 mAh.
++ * The 7T cell is 3800 mAh.  Mainline has no JEITA thermal loop and no
++ * battery authentication, so the charge current is clamped to 2 A instead of
++ * the vendor 3 A; the float voltage is left at the hardware default that the
++ * bootloader programmed.
++ */
++/ {
++	battery: battery {
++		compatible = "simple-battery";
++
++		charge-full-design-microamp-hours = <3800000>;
++		energy-full-design-microwatt-hours = <14630000>;
++
++		constant-charge-current-max-microamp = <2000000>;
++		constant-charge-voltage-max-microvolt = <4370000>;
++
++		voltage-min-design-microvolt = <3400000>;
++		voltage-max-design-microvolt = <4370000>;
++	};
++};
++
++&pm8150b_charger {
++	/*
++	 * Deliberately left disabled.
++	 *
++	 * On this board, any read of the charger's POWER_PATH_STATUS register
++	 * (the "online" property) wedges the SPMI bus: the read never returns
++	 * and the display then dies with a stream of "vblank wait timed out on
++	 * crtc 0" until the board is reset.  The fuel gauge reads the charger
++	 * status registers on its own, so battery state works without this
++	 * driver, and charging itself stays at the hardware defaults the
++	 * bootloader programmed.
++	 */
++	status = "disabled";
++};
++
++&pm8150b_fg {
++	status = "okay";
++	monitored-battery = <&battery>;
++	power-supplies = <&pm8150b_charger>;
++};
++
++/*
++ * Modem / ADSP / Wi-Fi are parked.
++ *
++ * The radio chain was taken all the way to "MPSS running" on this handset:
++ *   - RMTFS moved to low memory 0x89b00000 (the OnePlus-common 0xf2901000 and
++ *     the 0xfc201000 variant both fail SCM assignment here),
++ *   - mpss_mem widened to 160 MiB at 0x8dc00000 (the stock modem image spans
++ *     0x8dc00000..0x97c00000) with venus/slpi/ipa/gpu/spss/cdsp pushed up,
++ *   - the single-file OOS10 modem.mbn staged from the vendor firmware repo.
++ * MPSS boots that image, but ath10k still never sees the WLFW QMI service and
++ * the modem faults ("fatal error without message") the moment the driver talks
++ * to it.  Marking the WCN3990 rails regulator-always-on does not help and makes
++ * the board fail to boot, so nothing radio-related is enabled here.
++ */
++
++/*
++ * Wi-Fi: WCN3990 over SNOC.  Rails are wired and the driver is built in, but the
++ * interface cannot come up until the modem side is sorted out (see above).
++ */
++&wifi {
++	vdd-0.8-cx-mx-supply = <&vdda_wcss_pll>;
++	vdd-1.8-xo-supply = <&vreg_l7a_1p8>;
++	vdd-1.3-rfa-supply = <&vdda_wcss_adcdac_1>;
++	vdd-3.3-ch0-supply = <&vreg_l11c_3p3>;
++	vdd-3.3-ch1-supply = <&vreg_l10c_3p3>;
++};
++
++/*
++ * GPU: Adreno 640.
++ *
++ * Same three changes the hotdog port needed: enable the GPU, enable its GMU, and
++ * point the ZAP shader at the vendor image.  The SoC dtsi already carries the
++ * clocks, interconnect, power domains and OPP table, and msm_dpu binds the GPU
++ * as a component, so nothing else may be added here.
++ */
++&gpu {
++	status = "okay";
++};
++
++&gmu {
++	status = "okay";
++};
++
++&gpu_zap_shader {
++	firmware-name = "qcom/sm8150/a640_zap.mbn";
++};
+-- 
+2.47.3
+
