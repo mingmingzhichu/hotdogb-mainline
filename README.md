@@ -112,7 +112,7 @@ fastboot flash boot boot.img         # 内核 + DTB 打包在 boot 里
 
 ## 上传 GitHub 前
 
-1. `0001` 里的 `maintainers:` 是占位符 `TODO <todo@example.com>`，换成你自己。
+1. `0001` 里的 `maintainers:` 已填为 `mingmingzhichu <lihaoyu0717@outlook.com>`，如需改动请同步修改。
 2. 所有补丁的 `Signed-off-by` 也是占位符，换成真实姓名和邮箱（DCO 要求）。
 3. 跑一遍 `./scripts/checkpatch.pl --strict patches/*.patch`。
 4. 想上游的话：面板驱动和 binding 发 dri-devel，rmi4 补丁发 linux-input，DTS 跟着面板驱动一起发（DTS 依赖 binding 和 compatible，得同一个系列）。
