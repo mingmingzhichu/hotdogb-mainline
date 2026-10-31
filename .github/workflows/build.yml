@@ -1,0 +1,114 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      kernel_repo:
+        description: Kernel repository to build against
+        required: false
+        default: https://gitlab.postmarketos.org/soc/qualcomm-sm8150/linux.git
+      kernel_commit:
+        description: Kernel commit to check out
+        required: false
+        default: 8e126dbc4044ef2cec3ebe5754ddb05faa554af6
+
+env:
+  KERNEL_REPO: ${{ inputs.kernel_repo || 'https://gitlab.postmarketos.org/soc/qualcomm-sm8150/linux.git' }}
+  KERNEL_COMMIT: ${{ inputs.kernel_commit || '8e126dbc4044ef2cec3ebe5754ddb05faa554af6' }}
+  CROSS: aarch64-linux-gnu-
+
+jobs:
+  build:
+    name: arm64 Image + hotdogb dtb
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out the patch set
+        uses: actions/checkout@v4
+
+      - name: Install the cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential bc bison flex libssl-dev libelf-dev \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            device-tree-compiler python3
+
+      - name: Fetch the pinned kernel tree
+        run: |
+          git init linux
+          cd linux
+          git remote add origin "$KERNEL_REPO"
+          git fetch --depth 1 origin "$KERNEL_COMMIT"
+          git checkout FETCH_HEAD
+          git log -1 --format='%H %s'
+
+      - name: Apply the patches
+        run: |
+          cd linux
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git am ../patches/*.patch
+          git log --oneline -6
+
+      - name: Configure
+        run: |
+          cd linux
+          make ARCH=arm64 CROSS_COMPILE=$CROSS defconfig
+          scripts/kconfig/merge_config.sh -m .config ../configs/hotdogb-display-touch.config
+          make ARCH=arm64 CROSS_COMPILE=$CROSS olddefconfig
+          grep -E '^CONFIG_(DRM_PANEL_SAMSUNG_SOFEF03F|DRM_MSM|INPUT_EVDEV|KEYBOARD_GPIO)=' .config
+
+      - name: Build
+        run: |
+          cd linux
+          make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=$CROSS \
+            Image qcom/sm8150-oneplus-hotdogb.dtb
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p out
+          cp linux/arch/arm64/boot/Image out/Image
+          cp linux/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dtb out/
+          cp linux/.config out/config
+          ls -l out
+          sha256sum out/* | tee out/SHA256SUMS
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hotdogb-kernel-${{ github.sha }}
+          path: out/
+          if-no-files-found: error
+
+  checkpatch:
+    name: checkpatch
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+
+    steps:
+      - name: Check out the patch set
+        uses: actions/checkout@v4
+
+      - name: Install checkpatch dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends perl
+
+      - name: Fetch the pinned kernel tree
+        run: |
+          git init linux
+          cd linux
+          git remote add origin "$KERNEL_REPO"
+          git fetch --depth 1 origin "$KERNEL_COMMIT"
+          git checkout FETCH_HEAD
+
+      - name: Run checkpatch
+        run: |
+          cd linux
+          for p in ../patches/*.patch; do
+            echo "=== $p ==="
+            ./scripts/checkpatch.pl --no-tree --strict --patch "$p" || true
+          done
