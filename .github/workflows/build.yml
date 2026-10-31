@@ -6,22 +6,17 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      kernel_repo:
-        description: Kernel repository to build against
+      kernel_tarball:
+        description: Kernel source archive (GitLab/GitHub archive URL)
         required: false
-        default: https://gitlab.postmarketos.org/soc/qualcomm-sm8150/linux.git
-      kernel_commit:
-        description: Kernel commit to check out
-        required: false
-        default: 8e126dbc4044ef2cec3ebe5754ddb05faa554af6
+        default: https://gitlab.postmarketos.org/soc/qualcomm-sm8150/linux/-/archive/8e126dbc4044ef2cec3ebe5754ddb05faa554af6/linux-8e126dbc4044ef2cec3ebe5754ddb05faa554af6.tar.gz
       busybox_version:
         description: BusyBox version used for the initramfs
         required: false
         default: 1.36.1
 
 env:
-  KERNEL_REPO: ${{ inputs.kernel_repo || 'https://gitlab.postmarketos.org/soc/qualcomm-sm8150/linux.git' }}
-  KERNEL_COMMIT: ${{ inputs.kernel_commit || '8e126dbc4044ef2cec3ebe5754ddb05faa554af6' }}
+  KERNEL_TARBALL: ${{ inputs.kernel_tarball || 'https://gitlab.postmarketos.org/soc/qualcomm-sm8150/linux/-/archive/8e126dbc4044ef2cec3ebe5754ddb05faa554af6/linux-8e126dbc4044ef2cec3ebe5754ddb05faa554af6.tar.gz' }}
   BUSYBOX_VERSION: ${{ inputs.busybox_version || '1.36.1' }}
   CROSS: aarch64-linux-gnu-
   CMDS: "clk_ignore_unused loglevel=7 panic=0 printk.time=1 ramoops.max_reason=5 log_buf_len=4M"
@@ -43,24 +38,30 @@ jobs:
             build-essential bc bison flex libssl-dev libelf-dev \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             libc6-dev-arm64-cross \
-            device-tree-compiler python3 cpio wget bzip2
+            device-tree-compiler python3 cpio curl wget bzip2
 
       - name: Fetch the pinned kernel tree
         run: |
-          git init linux
-          cd linux
-          git remote add origin "$KERNEL_REPO"
-          git fetch --depth 1 origin "$KERNEL_COMMIT"
-          git checkout FETCH_HEAD
-          git log -1 --format='%H %s'
+          # The postmarketOS GitLab instance serves source archives quickly; a
+          # shallow git fetch of a specific commit is slow/unreliable from
+          # hosted runners, so download the archive instead.
+          curl -fL --retry 3 --retry-delay 5 -o linux.tar.gz "$KERNEL_TARBALL"
+          ls -l linux.tar.gz
+          tar xzf linux.tar.gz
+          dir=$(tar tzf linux.tar.gz | head -1 | cut -d/ -f1)
+          mv "$dir" linux
+          head -5 linux/Makefile
 
       - name: Apply the patches
         run: |
           cd linux
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git am ../patches/*.patch
-          git log --oneline -6
+          for p in ../patches/*.patch; do
+            echo "=== $p ==="
+            git apply --check "$p"
+            git apply "$p"
+          done
+          echo "patches applied"
+          grep -c sofef03f drivers/gpu/drm/panel/Makefile
 
       - name: Configure
         run: |
@@ -123,15 +124,14 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install checkpatch dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends perl
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends perl curl
 
       - name: Fetch the pinned kernel tree
         run: |
-          git init linux
-          cd linux
-          git remote add origin "$KERNEL_REPO"
-          git fetch --depth 1 origin "$KERNEL_COMMIT"
-          git checkout FETCH_HEAD
+          curl -fL --retry 3 -o linux.tar.gz "$KERNEL_TARBALL"
+          tar xzf linux.tar.gz
+          dir=$(tar tzf linux.tar.gz | head -1 | cut -d/ -f1)
+          mv "$dir" linux
 
       - name: Run checkpatch
         run: |
