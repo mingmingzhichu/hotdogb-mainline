@@ -4,7 +4,8 @@
 #   1. mount proc/sys/dev/debugfs
 #   2. bind a CDC-ACM USB gadget (1d6b:0104) so the host gets COMx
 #   3. serve a line-oriented command protocol on /dev/ttyGS0
-#   4. (background) find the vendor firmware partition and wire up Wi-Fi
+#   4. (background) start the radio stack: EFS copy, rmtfs, pd-mapper,
+#      tqftpserv, MPSS, then the WCN3990 modules
 #
 # Protocol (what hd_cmd.ps1 expects):
 #   device -> host : "__R__"   ready for a command
@@ -25,14 +26,118 @@ say() { echo "<6>init: $*" > /dev/kmsg 2>/dev/null; }
 
 say "userspace up"
 
+# ------------------------------------------------------- radio stack --------
+# The WLAN chip is not standalone: WCN3990 is brought up by MPSS, and MPSS
+# needs three userspace services or it asserts within a minute.
+#
+#   rmtfs      - serves the modem's EFS (modem_fs1/2, fsc, fsg) over QRTR.
+#   pd-mapper  - answers protection-domain lookups (the PD maps are the .jsn
+#                files next to the modem firmware).
+#   tqftpserv  - firmware file service used by the DSPs.
+#
+# EFS lives on the UFS partitions; it is copied into RAM so the daemons never
+# write to flash, and /dev/qcom_rmtfs_mem1 is only a shared-memory channel.
+(
+	mkdir -p /tmp/rmtfs
+
+	# UFS probes in parallel with init, so the partitions may not exist yet.
+	n=0
+	while [ $n -lt 60 ]; do
+		grep -lq '^PARTNAME=modemst1' /sys/block/sd*/sd*/uevent 2>/dev/null && break
+		sleep 1
+		n=$((n + 1))
+	done
+	say "EFS partitions visible after ${n}s"
+
+	for d in /sys/block/sd*/sd*; do
+		[ -r "$d/uevent" ] || continue
+		name=$(sed -n 's/^PARTNAME=//p' "$d/uevent")
+		case "$name" in
+		modemst1) out=modem_fs1 ;;
+		modemst2) out=modem_fs2 ;;
+		fsg) out=modem_fsg ;;
+		fsc) out=modem_fsc ;;
+		oem_stanvbk|oem_dycnvbk) out=$name ;;
+		*) continue ;;
+		esac
+		dev=/dev/${d##*/}
+		[ -b "$dev" ] && dd if="$dev" of="/tmp/rmtfs/$out" bs=1M 2>/dev/null
+	done
+
+	# tqftpserv serves the WLAN firmware's /readwrite/ requests (MAC address,
+	# calibration) out of /var/lib/tqftpserv.  Its mkdir() is not recursive,
+	# so without the parent directory it cannot create the directory itself
+	# and MPSS never publishes the WLFW service -- ath10k then waits forever
+	# in its QMI lookup.  Populate it from persist, read-only.
+	mkdir -p /var/lib/tqftpserv /tmp/persist
+	for d in /sys/block/sd*/sd*; do
+		[ -r "$d/uevent" ] || continue
+		[ "$(sed -n 's/^PARTNAME=//p' "$d/uevent")" = persist ] || continue
+		if mount -t ext4 -o ro "/dev/${d##*/}" /tmp/persist; then
+			cp -a /tmp/persist/. /var/lib/tqftpserv/ 2>/dev/null
+			umount /tmp/persist
+		fi
+		break
+	done
+	say "tqftpserv readwrite: $(ls /var/lib/tqftpserv 2>/dev/null | tr '\n' ' ')"
+
+	# The modem partition carries the WLAN firmware image built for this
+	# handset's modem.  Reusing another sm8150 device's wlanmdsp.mbn makes
+	# ath10k's "assign msa map permissions" SCM call fail with -EINVAL, and
+	# with qcom,msa-fixed-perm the WLAN subsystem then faults so hard that
+	# the whole chip resets into EDL.  Read-only; nothing is written back.
+	mkdir -p /tmp/modempart
+	for d in /sys/block/sd*/sd*; do
+		[ -r "$d/uevent" ] || continue
+		[ "$(sed -n 's/^PARTNAME=//p' "$d/uevent")" = modem_a ] || continue
+		if mount -t vfat -o ro "/dev/${d##*/}" /tmp/modempart; then
+			cp -f /tmp/modempart/image/wlanmdsp.mbn \
+				/lib/firmware/qcom/sm8150/oneplus7/ 2>/dev/null
+			umount /tmp/modempart
+			say "wlanmdsp $(wc -c < /lib/firmware/qcom/sm8150/oneplus7/wlanmdsp.mbn 2>/dev/null) bytes"
+		else
+			say "modem_a mount failed"
+		fi
+		break
+	done
+
+	n=0
+	while [ $n -lt 30 ] && [ ! -c /dev/qcom_rmtfs_mem1 ]; do
+		sleep 1
+		n=$((n + 1))
+	done
+
+	if [ -c /dev/qcom_rmtfs_mem1 ]; then
+		/bin/rmtfs -o /tmp/rmtfs -v > /tmp/rmtfs.log 2>&1 &
+	else
+		say "no /dev/qcom_rmtfs_mem1"
+	fi
+	sleep 1
+	/bin/pd-mapper > /tmp/pd-mapper.log 2>&1 &
+	/bin/tqftpserv > /tmp/tqftpserv.log 2>&1 &
+	sleep 1
+	say "radio services up"
+
+	# modem.mbn is 75 MB, which makes the boot image too big for
+	# `fastboot boot` on this bootloader, so it is copied in afterwards and
+	# /bin/radio_up.sh starts MPSS and the wireless modules.
+	FW=/lib/firmware/qcom/sm8150/oneplus7
+	if [ -f "$FW/modem.mbn" ]; then
+		/bin/radio_up.sh > /tmp/radio.log 2>&1
+	else
+		say "modem.mbn absent; run /bin/radio_up.sh after copying it"
+	fi
+) &
+
+
 # ------------------------------------------------------------- usb drive -----
 # A RAM-backed FAT image, exported to the host as a USB mass-storage LUN, so
-# firmware blobs can be dropped in at USB speed instead of 15 KB/s over the ACM
-# console.  Nothing on the real partitions is touched.
+# logs can be pulled off the board at USB speed.  Nothing on the real
+# partitions is touched.
 LUNIMG=/tmp/lun.img
 LUN_OK=
 dd if=/dev/zero of="$LUNIMG" bs=1M count=220 2>/dev/null
-if /bin/busybox.static mkfs.vfat "$LUNIMG" >/dev/null 2>&1; then
+if /bin/busybox.static mkfs.vfat -n HOTDOGB "$LUNIMG" >/dev/null 2>&1; then
 	LUN_OK=1
 	say "lun image ready"
 fi
@@ -75,30 +180,22 @@ else
 	say "no UDC found, serial console unavailable"
 fi
 
-if [ -c /dev/ttyGS0 ]; then
-	(
+# One command per line, output framed by __B__/__E__.  /bin/con is a tiny
+# non-blocking server: a shell version deadlocks when the host closes COMx
+# while a large output is still queued.  ttyGS0 only appears once the ACM
+# function is bound, so the loop retries until it does.
+(
+	n=0
+	while [ $n -lt 120 ] && [ ! -c /dev/ttyGS0 ]; do
 		sleep 1
-		exec 3<> /dev/ttyGS0
-		printf '\r\n*** hotdogb mainline console ***\r\n' >&3
-		printf 'one command per line, output ends with __E__\r\n' >&3
-		while :; do
-			printf '__R__\r\n' >&3
-			line=""
-			IFS= read -r line <&3 || { sleep 1; continue; }
-			[ -z "$line" ] && continue
-			case "$line" in
-			exit|quit) break ;;
-			esac
-			printf '__B__\r\n' >&3
-			/bin/busybox.static sh -c "$line" >&3 2>&1
-			printf '__E__\r\n' >&3
-		done
-	) &
-fi
-
-# ------------------------------------------------------------------------------
-# Wi-Fi / modem bring-up is parked; the working values are recorded in the
-# bring-up notes.  Nothing here may block the console.
+		n=$((n + 1))
+	done
+	say "console tty after ${n}s"
+	while :; do
+		/bin/con
+		sleep 1
+	done
+) &
 
 # PID 1 must never exit.
 while :; do

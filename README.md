@@ -141,3 +141,18 @@ clk_ignore_unused loglevel=7 panic=0 printk.time=1 ramoops.max_reason=5 log_buf_
 boot 镜像头；本地打包时可以直接改这一条。
 
 ## 踩过的坑
+
+## Wi-Fi（WCN3990）
+
+已打通：冷启动后执行一条 `/bin/wifi_up.sh`，`wlan0` 就会出现并可主动扫描。
+详见 [`docs/evidence/2026-11-02-wifi-wcn3990.md`](docs/evidence/2026-11-02-wifi-wcn3990.md) 和
+[`firmware/README-wifi.md`](firmware/README-wifi.md)。
+
+要点：
+
+- `wlanmdsp.mbn` **必须**取本机 `modem_a` 分区（`image/wlanmdsp.mbn`，4 070 084 B）。用 7T Pro
+  固件包里的那份会让 SCM 分配 MSA 内存时报 `-22`，后面 `failed to create WMI vdev 0: -108`。
+- **不要**用 `qcom,msa-fixed-perm`：跳过 SCM 分配会让 WLAN 子系统访问未授权内存，整机掉进 EDL。
+- MPSS 起之前 `rmtfs` / `pd-mapper` / `tqftpserv` 必须就绪，且 `tqftpserv` 要能创建
+  `/var/lib/tqftpserv`（从 `persist` 只读填充），否则 MPSS 不会发布 `ATH10k WLAN firmware service`。
+- 还没接 `wpa_supplicant`/DHCP，MAC 也是随机（modem 没从 EFS 拿到）。
