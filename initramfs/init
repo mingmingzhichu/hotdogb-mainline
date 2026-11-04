@@ -98,8 +98,14 @@ say "userspace up"
 			for f in /tmp/modempart/image/slpi.*; do
 				cp -f "$f" /lib/firmware/qcom/sm8150/oneplus7/ 2>/dev/null
 			done
+			# The audio DSP loads signed fragments too (13 MB), and the
+			# DTS points it at qcom/sm8150/adsp.mdt.
+			mkdir -p /lib/firmware/qcom/sm8150
+			for f in /tmp/modempart/image/adsp.*; do
+				cp -f "$f" /lib/firmware/qcom/sm8150/ 2>/dev/null
+			done
 			umount /tmp/modempart
-			say "wlanmdsp $(wc -c < /lib/firmware/qcom/sm8150/oneplus7/wlanmdsp.mbn 2>/dev/null) bytes, slpi $(ls /lib/firmware/qcom/sm8150/oneplus7/slpi.b* 2>/dev/null | wc -l) fragments"
+			say "wlanmdsp $(wc -c < /lib/firmware/qcom/sm8150/oneplus7/wlanmdsp.mbn 2>/dev/null) bytes, slpi $(ls /lib/firmware/qcom/sm8150/oneplus7/slpi.b* 2>/dev/null | wc -l) + adsp $(ls /lib/firmware/qcom/sm8150/adsp.b* 2>/dev/null | wc -l) fragments"
 		else
 			say "modem_a mount failed"
 		fi
@@ -126,14 +132,20 @@ say "userspace up"
 	# The sensor core (SSC) runs on the SLPI, whose firmware was copied
 	# out of modem_a above.  pd-mapper must answer its protection-domain
 	# lookup first, so this is done after the services are up.
-	if [ -f /lib/firmware/qcom/sm8150/oneplus7/slpi.mdt ]; then
-		for r in /sys/class/remoteproc/remoteproc*; do
-			[ "$(cat $r/name 2>/dev/null)" = slpi ] || continue
-			echo start > $r/state 2>/dev/null
-			sleep 2
-			say "slpi $(cat $r/state 2>/dev/null)"
-		done
-	fi
+	# The sensor core (SSC) runs on the SLPI and the audio DSP is the ADSP;
+	# both load signed firmware that /init copied out of modem_a above.
+	# pd-mapper must answer their protection-domain lookups first.
+	for r in /sys/class/remoteproc/remoteproc*; do
+		case "$(cat $r/name 2>/dev/null)" in
+		slpi) fw=/lib/firmware/qcom/sm8150/oneplus7/slpi.mdt ;;
+		adsp) fw=/lib/firmware/qcom/sm8150/adsp.mdt ;;
+		*) continue ;;
+		esac
+		[ -f "$fw" ] || continue
+		echo start > $r/state 2>/dev/null
+		sleep 2
+		say "$(cat $r/name) $(cat $r/state 2>/dev/null)"
+	done
 
 	# modem.mbn is 75 MB, which makes the boot image too big for
 	# `fastboot boot` on this bootloader, so it is copied in afterwards and
