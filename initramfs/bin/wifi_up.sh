@@ -55,9 +55,10 @@ for m in cfg80211 mac80211 ath ath10k_core ath10k_snoc; do
 	insmod "/lib/modules/$m.ko" || echo "insmod $m failed: $?"
 done
 
-# ath10k registers the netdev a few seconds after probe returns.
+# ath10k registers the netdev a few seconds after probe returns; on a slow boot
+# it can take noticeably longer than the module load itself.
 n=0
-while [ $n -lt 20 ]; do
+while [ $n -lt 40 ]; do
 	[ -d /sys/class/net/wlan0 ] && break
 	sleep 1
 	n=$((n + 1))

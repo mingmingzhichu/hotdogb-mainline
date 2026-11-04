@@ -35,7 +35,7 @@ jobs:
             build-essential bc bison flex libssl-dev libelf-dev \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             libc6-dev-arm64-cross \
-            device-tree-compiler python3 cpio curl wget bzip2
+            device-tree-compiler python3 cpio curl wget bzip2 patch
 
       - name: Fetch the pinned kernel tree
         run: |
@@ -51,11 +51,14 @@ jobs:
 
       - name: Apply the patches
         run: |
+          set -x
           cd linux
           for p in ../patches/*.patch; do
             echo "=== $p ==="
-            git apply --check "$p"
-            git apply "$p"
+            patch -p1 --batch --forward --no-backup-if-mismatch < "$p" || {
+              echo "FAILED to apply $p"
+              exit 1
+            }
           done
           echo "patches applied"
           grep -c sofef03f drivers/gpu/drm/panel/Makefile

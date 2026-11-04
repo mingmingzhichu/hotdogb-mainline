@@ -156,3 +156,31 @@ boot 镜像头；本地打包时可以直接改这一条。
 - MPSS 起之前 `rmtfs` / `pd-mapper` / `tqftpserv` 必须就绪，且 `tqftpserv` 要能创建
   `/var/lib/tqftpserv`（从 `persist` 只读填充），否则 MPSS 不会发布 `ATH10k WLAN firmware service`。
 - 还没接 `wpa_supplicant`/DHCP，MAC 也是随机（modem 没从 EFS 拿到）。
+
+## 90 Hz
+
+面板实测跑在 90 Hz：
+
+```
+$ /bin/vbltest /dev/dri/card0 3
+268 vblanks in 3.008 s = 89.11 Hz
+```
+
+`/sys/class/drm/*/modes` 不显示刷新率，debugfs 的 `vblank fps` 是滑动平均（读出来 38，
+没有参考价值），所以用 `tools/vbltest.c` 直接等 vblank 计数。详见
+[`docs/evidence/2026-11-04-refresh-90hz.md`](docs/evidence/2026-11-04-refresh-90hz.md)。
+
+驱动里只有一个 mode，就是按 90 Hz 算的（1180 × 2416 × 90 = 256.6 MHz），面板用 DCS
+`0x60 = 0x10` 跟着切过去，所以 DSI PLL / PHY / DSC 参数与 60 Hz 组完全一致。
+
+## dtbo 必须是空的（否则起不来）
+
+`fastboot boot` 时 ABL 也会把 **dtbo 分区**的 overlay 叠到 boot.img 自带的 DTB 上，所以
+刷回原厂 dtbo 之后，我们的镜像 `Booting OKAY` 但用户空间永远不起来（COM 口不出现，设备
+自己回到 fastboot）。测试前需要：
+
+```sh
+fastboot flash dtbo_a noop-dtbo.img
+```
+
+收尾回滚再用 `fastboot flash dtbo_a backup/dtbo_a.img`。
