@@ -155,7 +155,9 @@ boot 镜像头；本地打包时可以直接改这一条。
 - **不要**用 `qcom,msa-fixed-perm`：跳过 SCM 分配会让 WLAN 子系统访问未授权内存，整机掉进 EDL。
 - MPSS 起之前 `rmtfs` / `pd-mapper` / `tqftpserv` 必须就绪，且 `tqftpserv` 要能创建
   `/var/lib/tqftpserv`（从 `persist` 只读填充），否则 MPSS 不会发布 `ATH10k WLAN firmware service`。
-- 还没接 `wpa_supplicant`/DHCP，MAC 也是随机（modem 没从 EFS 拿到）。
+- 还没接 `wpa_supplicant`/DHCP，只能扫；MAC 已从 `persist` 的 `wlan_mac.bin` 设成真实地址
+  （`ath10k` 自己取不到，会随机一个）。这些属于用户态，见
+  [`docs/deferred-to-userspace.md`](docs/deferred-to-userspace.md)。
 
 ## 90 Hz
 
