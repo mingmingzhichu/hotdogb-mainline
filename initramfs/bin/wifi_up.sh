@@ -64,3 +64,22 @@ while [ $n -lt 40 ]; do
 	n=$((n + 1))
 done
 echo "net: $(ls /sys/class/net) after ${n}s"
+
+# ath10k gets no MAC address here: device_get_mac_address() finds no
+# local-mac-address in the DT and the firmware/QMI does not hand one out, so
+# ath10k_mac_register() logs "invalid MAC address; choosing random" and installs
+# a random one.  The real address is in persist's wlan_mac.bin, which /init
+# copies to /var/lib/tqftpserv so tqftpserv can serve it to MPSS.
+MACFILE=/var/lib/tqftpserv/wlan_mac.bin
+if [ -d /sys/class/net/wlan0 ] && [ -f "$MACFILE" ]; then
+	HEX=$(sed -n 's/^Intf0MacAddress=//p' "$MACFILE" | tr -d '\r' | tr 'A-F' 'a-f')
+	if [ ${#HEX} -eq 12 ]; then
+		MAC=$(echo "$HEX" | cut -c1-2):$(echo "$HEX" | cut -c3-4):$(echo "$HEX" \
+			| cut -c5-6):$(echo "$HEX" | cut -c7-8):$(echo "$HEX" \
+			| cut -c9-10):$(echo "$HEX" | cut -c11-12)
+		ip link set wlan0 down
+		ip link set wlan0 address "$MAC" || echo "set mac $MAC failed"
+		ip link set wlan0 up
+		echo "mac: $(cat /sys/class/net/wlan0/address)"
+	fi
+fi
