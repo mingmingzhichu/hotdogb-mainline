@@ -159,6 +159,24 @@ boot 镜像头；本地打包时可以直接改这一条。
   （`ath10k` 自己取不到，会随机一个）。这些属于用户态，见
   [`docs/deferred-to-userspace.md`](docs/deferred-to-userspace.md)。
 
+## 传感器（SLPI / SSC）
+
+加速度计、陀螺、光感和距离都在 SLPI（传感器 DSP）上。SLPI 固件在 `modem_a` 里
+（`slpi.mdt` + 21 个分片，6 MB），`/init` 开机时拷到 `/lib/firmware`，等 pd-mapper 起好后
+`echo start` 就能跑起来：
+
+```
+$ for r in /sys/class/remoteproc/*; do echo $(cat $r/name) $(cat $r/state); done
+slpi running
+$ /bin/qrtr-lookup | grep -i sensor
+      400       1        0    9    13 Snapdragon Sensor Core service
+```
+
+还差用户态 QMI SSC 客户端（Debian 里是 `libssc` + `iio-sensor-proxy`）。
+详见 [`docs/evidence/2026-11-04-sensors-slpi.md`](docs/evidence/2026-11-04-sensors-slpi.md)。
+
+GPS 同理：MPSS 起来后 QRTR 上已经有 Location service（QMI 16），差 `gnss-share` 这样的客户端。
+
 ## 90 Hz
 
 面板实测跑在 90 Hz：

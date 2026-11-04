@@ -11,6 +11,8 @@ Debian/rootfs 起来之后应该删掉，换成标准做法。
 | `rmtfs` / `pd-mapper` / `tqftpserv` | initramfs 里手写脚本起 | pmOS 现成的包 + service 单元，不需要自己维护 |
 | 亮度曲线 / 自动亮度 | 线性映射 | 内核只给原始亮度，曲线放 userspace；或者把原厂曲线搬进面板驱动（二选一） |
 | 触摸手势、校准 | 无 | libinput |
+| **传感器**（加速度/陀螺/光感/距离） | SLPI 已起，SSC 服务在 QRTR 上（service 400），没有客户端 | `libssc` + `iio-sensor-proxy`，pmOS 有现成包 |
+| **GPS** | MPSS 已发布 Location service（QMI 16），没有客户端 | `gnss-share`（或 libqmi 的 LOC），归 Debian |
 | 串口 gadget 控制台 `con` | initramfs 里自建 | 正常 getty / SSH，`con` 删掉 |
 | 75 MB 固件每次开机推一遍 LUN | `push_wifi.ps1` | 固件放 `/lib/firmware`（rootfs 里），不再需要 LUN |
 
