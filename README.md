@@ -58,12 +58,23 @@ for p in patches/*.patch; do patch -p1 < "$p"; done
 ## 编译
 
 ```bash
-scripts/kconfig/merge_config.sh -m .config configs/hotdogb-display-touch.config
+scripts/kconfig/merge_config.sh -m .config \
+    configs/hotdogb-display-touch.config configs/hotdogb-audio.config
 make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
-make -j$(nproc) ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- Image qcom/sm8150-oneplus-hotdogb.dtb
+make -j$(nproc) ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+    Image qcom/sm8150-oneplus-hotdogb.dtb modules
 ```
 
 配置片段里开了：`DRM_MSM`、`DRM_MSM_DSI`、`DRM_MSM_DSI_7NM_PHY`、`DRM_MSM_KMS_FBDEV`、`DRM_PANEL_SAMSUNG_SOFEF03F`、`RMI4_*`、`I2C_QCOM_GENI`、`REGULATOR_QCOM_LABIBB`。
+
+显示/触屏全部编进 `vmlinux`（开机就要用）。音频是模块：`SND_SOC_QDSP6`、`SND_SOC_SM8150`、`MFD_WCD934X`、`SND_SOC_WCD934X`、`SLIM_QCOM_NGD_CTRL`、`SOUNDWIRE_QCOM`，`SLIMBUS` 本身编进内核。装模块：
+
+```bash
+make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+    INSTALL_MOD_PATH=/tmp/mods INSTALL_MOD_STRIP=1 modules_install
+```
+
+GitHub Actions 会把 stripped 模块树一起打出来（`out/modules.tar.gz` 和 `out/modules/`），方便直接对照本地那套 `load.sh`。
 
 ## 启动前
 

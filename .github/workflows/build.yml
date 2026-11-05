@@ -34,7 +34,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential bc bison flex libssl-dev libelf-dev \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            libc6-dev-arm64-cross \
+            libc6-dev-arm64-cross kmod \
             device-tree-compiler python3 cpio curl wget bzip2 patch
 
       - name: Fetch the pinned kernel tree
@@ -67,15 +67,17 @@ jobs:
         run: |
           cd linux
           make ARCH=arm64 CROSS_COMPILE=$CROSS defconfig
-          scripts/kconfig/merge_config.sh -m .config ../configs/hotdogb-display-touch.config
+          scripts/kconfig/merge_config.sh -m .config \
+            ../configs/hotdogb-display-touch.config \
+            ../configs/hotdogb-audio.config
           make ARCH=arm64 CROSS_COMPILE=$CROSS olddefconfig
-          grep -E '^CONFIG_(DRM_PANEL_SAMSUNG_SOFEF03F|DRM_MSM|INPUT_EVDEV|KEYBOARD_GPIO)=' .config
+          grep -E '^CONFIG_(DRM_PANEL_SAMSUNG_SOFEF03F|DRM_MSM|DRM_KMS_HELPER|INPUT_EVDEV|KEYBOARD_GPIO|SND_SOC_SM8150|SND_SOC_QDSP6|SND_SOC_WCD934X|MFD_WCD934X|SLIM_QCOM_NGD_CTRL)=' .config
 
-      - name: Build the kernel and the DTB
+      - name: Build the kernel, the DTB and the modules
         run: |
           cd linux
           make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=$CROSS \
-            Image qcom/sm8150-oneplus-hotdogb.dtb
+            Image qcom/sm8150-oneplus-hotdogb.dtb modules
 
       - name: Build a static aarch64 busybox
         run: |
@@ -86,6 +88,16 @@ jobs:
           sed -i 's/^# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
           make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=$CROSS
           file busybox
+
+      - name: Install the modules
+        run: |
+          cd linux
+          make ARCH=arm64 CROSS_COMPILE=$CROSS \
+            INSTALL_MOD_PATH="$PWD/../out/modules" INSTALL_MOD_STRIP=1 \
+            modules_install
+          tar czf ../out/modules.tar.gz -C ../out modules
+          echo "modules: $(find ../out/modules -name '*.ko' | wc -l)"
+          du -sh ../out/modules ../out/modules.tar.gz
 
       - name: Assemble the artifacts
         run: |
@@ -104,7 +116,8 @@ jobs:
             --dtb out/sm8150-oneplus-hotdogb.dtb \
             --cmdline "$CMDS" \
             --output out/boot-hotdogb.img
-          sha256sum out/* | tee out/SHA256SUMS
+          find out -maxdepth 1 -type f ! -name SHA256SUMS -print0 |
+            xargs -0 sha256sum | tee out/SHA256SUMS
           ls -l out
 
       - name: Upload artifacts
