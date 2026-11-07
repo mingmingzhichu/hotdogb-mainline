@@ -71,6 +71,13 @@ chmod 644 /etc/systemd/network/10-usb0.network \
 ln -sf /dev/null /etc/systemd/system/proc-sys-fs-binfmt_misc.mount
 ln -sf /dev/null /etc/systemd/system/systemd-binfmt.service
 
+# The initramfs already assigned 172.16.42.1 to usb0.  Letting networkd
+# reconfigure the link flaps it and kills the NBD connection that carries
+# the root filesystem.
+ln -sf /dev/null /etc/systemd/system/systemd-networkd.service
+ln -sf /dev/null /etc/systemd/system/systemd-networkd.socket
+ln -sf /dev/null /etc/systemd/system/systemd-networkd-wait-online.service
+
 rm -f /usr/bin/qemu-aarch64-static
 rm -rf /var/lib/apt/lists/*
 '
