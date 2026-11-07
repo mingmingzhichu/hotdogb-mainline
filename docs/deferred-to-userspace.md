@@ -15,6 +15,8 @@ Debian/rootfs 起来之后应该删掉，换成标准做法。
 | **GPS** | MPSS 已发布 Location service（QMI 16），没有客户端 | `gnss-share`（或 libqmi 的 LOC），归 Debian |
 | 串口 gadget 控制台 `con` | initramfs 里自建 | 正常 getty / SSH，`con` 删掉 |
 | 75 MB 固件每次开机推一遍 LUN | `push_wifi.ps1` | 固件放 `/lib/firmware`（rootfs 里），不再需要 LUN |
+| **音频路由 / 音量** | `sndtool` 在串口里逐条 `amixer` 式设置 | `alsa-ucm-conf` 里给这块板写 UCM 配置（耳机/听筒/扬声器三个 profile），由 PipeWire/PulseAudio 调用；`alsactl store` 固化默认值 |
+| **麦克风前端** | 尚无 | 先补内核 capture DAI link（bringup 0043–0045），再在 UCM 里暴露 |
 
 ## 仍然必须在内核里解决的
 
