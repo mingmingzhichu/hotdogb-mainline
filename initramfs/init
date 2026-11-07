@@ -24,7 +24,44 @@ mount -t debugfs none /sys/kernel/debug 2>/dev/null
 
 say() { echo "<6>init: $*" > /dev/kmsg 2>/dev/null; }
 
+# Read a key=value pair out of the kernel command line.
+cmdline_var() {
+	awk -v k="$1" '{
+		for (i = 1; i <= NF; i++)
+			if (index($i, k "=") == 1) {
+				sub(k "=", "", $i);
+				print $i;
+				exit;
+			}
+	}' /proc/cmdline
+}
+
+CMDLINE=$(cat /proc/cmdline)
+NETBOOT=
+case "$CMDLINE" in
+*hotdogb.netboot=1*) NETBOOT=1 ;;
+esac
+
 say "userspace up"
+
+# ------------------------------------------------------------- netboot ------
+# postmarketOS-style netboot: the root filesystem is a raw disk image served
+# over NBD by the PC, reachable through the USB gadget Ethernet.  The device
+# takes 172.16.42.1 (pmOS convention), the host is 172.16.42.2.
+#
+# This runs before the radio stack because there is no point bringing up
+# Wi-Fi when the root filesystem comes from the cable.
+if [ -n "$NETBOOT" ]; then
+	NB_HOST=$(cmdline_var hotdogb.netboot.host)
+	NB_PORT=$(cmdline_var hotdogb.netboot.port)
+	NB_DEV=$(cmdline_var hotdogb.netboot.dev)
+	NB_INIT=$(cmdline_var init)
+	: "${NB_HOST:=172.16.42.2}"
+	: "${NB_PORT:=9999}"
+	: "${NB_DEV:=/dev/nbd0}"
+	: "${NB_INIT:=/sbin/init}"
+	say "netboot: host $NB_HOST port $NB_PORT"
+fi
 
 # ------------------------------------------------------- radio stack --------
 # The WLAN chip is not standalone: WCN3990 is brought up by MPSS, and MPSS
@@ -37,6 +74,7 @@ say "userspace up"
 #
 # EFS lives on the UFS partitions; it is copied into RAM so the daemons never
 # write to flash, and /dev/qcom_rmtfs_mem1 is only a shared-memory channel.
+if [ -z "$NETBOOT" ]; then
 (
 	mkdir -p /tmp/rmtfs
 
@@ -157,6 +195,7 @@ say "userspace up"
 		say "modem.mbn absent; run /bin/radio_up.sh after copying it"
 	fi
 ) &
+fi
 
 
 # ------------------------------------------------------------- usb drive -----
@@ -165,10 +204,12 @@ say "userspace up"
 # partitions is touched.
 LUNIMG=/tmp/lun.img
 LUN_OK=
-dd if=/dev/zero of="$LUNIMG" bs=1M count=220 2>/dev/null
-if /bin/busybox.static mkfs.vfat -n HOTDOGB "$LUNIMG" >/dev/null 2>&1; then
-	LUN_OK=1
-	say "lun image ready"
+if [ -z "$NETBOOT" ]; then
+	dd if=/dev/zero of="$LUNIMG" bs=1M count=220 2>/dev/null
+	if /bin/busybox.static mkfs.vfat -n HOTDOGB "$LUNIMG" >/dev/null 2>&1; then
+		LUN_OK=1
+		say "lun image ready"
+	fi
 fi
 
 # ---------------------------------------------------------------- serial -----
@@ -203,10 +244,58 @@ if [ -n "$UDC" ]; then
 		echo 1 > "$G/functions/mass_storage.0/lun.0/removable"
 		ln -sf "$G/functions/mass_storage.0" "$G/configs/c.1/" 2>/dev/null
 	fi
+	if [ -n "$NETBOOT" ]; then
+		# Windows and Linux both bind this as an Ethernet interface.
+		mkdir -p "$G/functions/rndis.usb0"
+		ln -sf "$G/functions/rndis.usb0" "$G/configs/c.1/" 2>/dev/null
+		echo "acm+rndis" > "$G/configs/c.1/strings/0x409/configuration"
+	fi
 	echo "$UDC" > "$G/UDC"
 	say "gadget bound to $UDC"
 else
 	say "no UDC found, serial console unavailable"
+fi
+
+# --------------------------------------------------------------- netboot -----
+# Connect the NBD root and hand over to it.  On failure stay in the initramfs
+# so the serial console remains usable.
+if [ -n "$UDC" ] && [ -n "$NETBOOT" ]; then
+	n=0
+	while [ $n -lt 20 ] && [ ! -e /sys/class/net/usb0 ]; do
+		sleep 1
+		n=$((n + 1))
+	done
+	if [ -e /sys/class/net/usb0 ]; then
+		ip addr add 172.16.42.1/24 dev usb0 2>/dev/null
+		ip link set usb0 up
+		say "netboot: usb0 up"
+
+		n=0
+		while [ $n -lt 15 ]; do
+			nbd-client -b 4096 -t 30 "$NB_HOST" "$NB_PORT" "$NB_DEV" \
+				>/tmp/nbd.log 2>&1 && break
+			n=$((n + 1))
+			sleep 2
+		done
+
+		if [ $n -lt 15 ]; then
+			mkdir -p /newroot
+			target=$NB_DEV
+			[ -b "${NB_DEV}p1" ] && target="${NB_DEV}p1"
+			if mount -t ext4 -o rw "$target" /newroot; then
+				say "netboot: mounted $target, switching root"
+				mount -t proc proc /newroot/proc 2>/dev/null
+				mount -t sysfs sysfs /newroot/sys 2>/dev/null
+				mount -t devtmpfs devtmpfs /newroot/dev 2>/dev/null
+				exec switch_root /newroot "$NB_INIT"
+			fi
+			say "netboot: mount $target failed"
+		else
+			say "netboot: nbd-client failed: $(cat /tmp/nbd.log 2>/dev/null)"
+		fi
+	else
+		say "netboot: usb0 never appeared"
+	fi
 fi
 
 # One command per line, output framed by __B__/__E__.  /bin/con is a tiny

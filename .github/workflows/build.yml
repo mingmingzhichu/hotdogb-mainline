@@ -64,9 +64,10 @@ jobs:
           make ARCH=arm64 CROSS_COMPILE=$CROSS defconfig
           scripts/kconfig/merge_config.sh -m .config \
             ../configs/hotdogb-display-touch.config \
-            ../configs/hotdogb-audio.config
+            ../configs/hotdogb-audio.config \
+            ../configs/hotdogb-netboot.config
           make ARCH=arm64 CROSS_COMPILE=$CROSS olddefconfig
-          grep -E '^CONFIG_(DRM_PANEL_SAMSUNG_SOFEF03F|DRM_MSM|DRM_KMS_HELPER|INPUT_EVDEV|KEYBOARD_GPIO|SND_SOC_SM8150|SND_SOC_QDSP6|SND_SOC_WCD934X|MFD_WCD934X|SLIM_QCOM_NGD_CTRL)=' .config
+          grep -E '^CONFIG_(DRM_PANEL_SAMSUNG_SOFEF03F|DRM_MSM|DRM_KMS_HELPER|INPUT_EVDEV|KEYBOARD_GPIO|SND_SOC_SM8150|SND_SOC_QDSP6|SND_SOC_WCD934X|MFD_WCD934X|SLIM_QCOM_NGD_CTRL|BLK_DEV_NBD)=' .config
 
       - name: Build the kernel, the DTB and the modules
         run: |
