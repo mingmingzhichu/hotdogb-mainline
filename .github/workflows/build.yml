@@ -12,6 +12,10 @@ env:
   KERNEL_TARBALL: ${{ inputs.kernel_tarball || 'https://gitlab.postmarketos.org/soc/qualcomm-sm8150/linux/-/archive/8e126dbc4044ef2cec3ebe5754ddb05faa554af6/linux-8e126dbc4044ef2cec3ebe5754ddb05faa554af6.tar.gz' }}
   CROSS: aarch64-linux-gnu-
   CMDS: "clk_ignore_unused loglevel=7 panic=0 printk.time=1 ramoops.max_reason=5 log_buf_len=4M"
+  RELEASE_TAG: ci-latest
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -22,6 +26,13 @@ jobs:
     steps:
       - name: Check out the patch set
         uses: actions/checkout@v4
+
+      - name: Clean the previous release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete "$RELEASE_TAG" --yes --cleanup-tag || true
+          git push origin ":refs/tags/$RELEASE_TAG" 2>/dev/null || true
 
       - name: Install the cross toolchain
         run: |
@@ -135,12 +146,23 @@ jobs:
             xargs -0 sha256sum | tee out/SHA256SUMS
           ls -l out
 
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: hotdogb-kernel-${{ github.sha }}
-          path: out/
-          if-no-files-found: error
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            --title "hotdogb CI build" \
+            --notes "Built from ${{ github.sha }}" \
+            --prerelease
+          for f in out/*; do
+            [ -f "$f" ] || continue
+            if [ "$(stat -c%s "$f")" -gt 2000000000 ]; then
+              echo "skipping $f (over the 2 GiB asset limit)"
+              continue
+            fi
+            gh release upload "$RELEASE_TAG" "$f" --clobber
+          done
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name'
 
   checkpatch:
     name: checkpatch
