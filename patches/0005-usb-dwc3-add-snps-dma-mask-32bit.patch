@@ -1,0 +1,89 @@
+From 27d40ed2daac0ab97797eb633991518586027616 Mon Sep 17 00:00:00 2001
+From: mingmingzhichu <lihaoyu0717@outlook.com>
+Date: Sat, 31 Oct 2026 16:36:59 +0800
+Subject: [PATCH] usb: dwc3: add snps,dma-mask-32bit for 32-bit interconnects
+
+The SM8150 USB controller advertises a 64-bit address width, but the
+interconnect in front of it only decodes the low 4 GiB.  A 64-bit
+coherent allocation can land outside DRAM and the first DMA then wedges
+the NoC, which shows up as the gadget failing to queue requests.
+
+Describe the limitation in the device tree instead of hardcoding it in
+the driver: boards add snps,dma-mask-32bit to the dwc3 node, and the
+core then limits both the streaming and the coherent mask to 32 bits.
+
+Signed-off-by: mingmingzhichu <lihaoyu0717@outlook.com>
+---
+ .../devicetree/bindings/usb/snps,dwc3-common.yaml  |  7 +++++++
+ .../arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts |  5 +++++
+ drivers/usb/dwc3/core.c                            | 23 +++++++++++++++++-----
+ 3 files changed, 30 insertions(+), 5 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/usb/snps,dwc3-common.yaml b/Documentation/devicetree/bindings/usb/snps,dwc3-common.yaml
+index 39314de11..fdaba863b 100644
+--- a/Documentation/devicetree/bindings/usb/snps,dwc3-common.yaml
++++ b/Documentation/devicetree/bindings/usb/snps,dwc3-common.yaml
+@@ -76,6 +76,13 @@ properties:
+       minimum: 2
+       maximum: 31
+ 
++  snps,dma-mask-32bit:
++    type: boolean
++    description:
++      The controller advertises 64-bit addressing, but the interconnect in
++      front of it only decodes the low 4 GiB.  Limit coherent DMA
++      allocations to the 32-bit address space.
++
+   snps,dis-start-transfer-quirk:
+     description:
+       When set, disable isoc START TRANSFER command failure SW work-around
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts b/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
+index 45bc12d8d..e8d537a25 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
+@@ -324,6 +324,11 @@ &wifi {
+ 	vdd-3.3-ch1-supply = <&vreg_l10c_3p3>;
+ };
+ 
++/* The USB interconnect only decodes the low 4 GiB. */
++&usb_1_dwc3 {
++	snps,dma-mask-32bit;
++};
++
+ /*
+  * GPU: Adreno 640.
+  *
+diff --git a/drivers/usb/dwc3/core.c b/drivers/usb/dwc3/core.c
+index ee56148eb..9140271d6 100644
+--- a/drivers/usb/dwc3/core.c
++++ b/drivers/usb/dwc3/core.c
+@@ -2276,11 +2276,24 @@ int dwc3_core_probe(const struct dwc3_probe_data *data)
+ 	dev_set_drvdata(dev, dwc);
+ 	dwc3_cache_hwparams(dwc);
+ 
+-	if (!dev_is_pci(dwc->sysdev) &&
+-	    DWC3_GHWPARAMS0_AWIDTH(dwc->hwparams.hwparams0) == 64) {
+-		ret = dma_set_mask_and_coherent(dwc->sysdev, DMA_BIT_MASK(64));
+-		if (ret)
+-			goto err_disable_clks;
++	/*
++	 * The controller advertises a 64-bit address width, so the driver
++	 * normally asks for a 64-bit mask.  Some boards put a 32-bit-only
++	 * interconnect behind it, where a 64-bit coherent allocation lands
++	 * outside DRAM and the first DMA wedges; the DT marks those with
++	 * "snps,dma-mask-32bit".
++	 */
++	if (!dev_is_pci(dwc->sysdev)) {
++		u64 dma_mask = DMA_BIT_MASK(64);
++
++		if (device_property_read_bool(dev, "snps,dma-mask-32bit"))
++			dma_mask = DMA_BIT_MASK(32);
++		if (DWC3_GHWPARAMS0_AWIDTH(dwc->hwparams.hwparams0) == 64 ||
++		    dma_mask == DMA_BIT_MASK(32)) {
++			ret = dma_set_mask_and_coherent(dwc->sysdev, dma_mask);
++			if (ret)
++				goto err_disable_clks;
++		}
+ 	}
+ 
+ 	/*

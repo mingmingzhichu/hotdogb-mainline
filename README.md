@@ -30,7 +30,7 @@ boot/       32 字节空 DTBO（跑主线前必须刷，见"启动前"）
 | 0002 | `drm/panel: add driver for the Samsung SOFEF03F DSC panel` | 新驱动 + Kconfig/Makefile |
 | 0003 | `Input: rmi4 - honour the reset-gpios property` | 让 rmi4 真正去拉复位脚 |
 | 0004 | `arm64: dts: ...: display + touchscreen` | 板级 compatible、DPU/DSI/PHY/面板（去掉 simplefb）、i2c17 上的 S3706 |
-| 0005 | `usb: dwc3: keep Qualcomm glue DMA in the low 4 GiB` | 只对 `qcom,dwc3` 限制 32 位掩码，修第一次 DMA 死锁 |
+| 0005 | `usb: dwc3: add snps,dma-mask-32bit for 32-bit interconnects` | 用 DT 属性描述 32 位互连，core 按属性设置 DMA mask |
 | 0006 | `dt-bindings: sound: add the NXP TFA9874 amplifier` | 新增 YAML binding |
 | 0007 | `ASoC: tfa9874: add the NXP TFA9874 speaker amplifier` | 新 codec 驱动 + Kconfig/Makefile |
 | 0008 | `arm64: dts: ...: enable audio and the speaker amplifiers` | WCD9340 on SLIMbus、两颗 TFA9874、QUATERNARY_MI2S_RX、声卡 DAI link |

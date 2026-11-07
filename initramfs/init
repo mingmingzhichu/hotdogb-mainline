@@ -271,7 +271,6 @@ if [ -n "$UDC" ]; then
 		# Rescue shell on the ACM port.  The netboot flow has no
 		# command service, so this is the only way to poke at it.
 		( sleep 2; sh -i </dev/ttyGS0 >/dev/ttyGS0 2>&1 ) &
-		RESCUE_PID=$!
 	fi
 else
 	say "no UDC found, serial console unavailable"
@@ -324,9 +323,6 @@ if [ -n "$UDC" ] && [ -n "$NETBOOT" ]; then
 		done
 
 		say "netboot: mounted $target, switching root"
-		# The rootfs getty owns ttyGS0 now; do not leave a second
-		# reader on the ACM port.
-		[ -n "$RESCUE_PID" ] && kill "$RESCUE_PID" 2>/dev/null
 		mount -t proc proc /newroot/proc 2>/dev/null
 		mount -t sysfs sysfs /newroot/sys 2>/dev/null
 		mount -t devtmpfs devtmpfs /newroot/dev 2>/dev/null
