@@ -3,6 +3,17 @@
 netboot 的根文件系统是 Debian trixie（`tools/build_debian_rootfs.sh`）。
 这里记录还需要在 Debian 里补的东西和手动步骤。
 
+## 图形界面 / 屏幕键盘
+
+CI 的 rootfs 会装 `phosh` + `squeekboard` + `greetd`：
+
+- `greetd` 在 `tty1` 起 `phosh`（`/etc/greetd/config.toml`）；
+- 屏幕键盘就是 **squeekboard**（Phosh 自带，无需额外配置）；
+- 默认目标改成 `graphical.target`。
+
+没有装完整 GNOME，只装了 Phosh 需要的依赖；如果 Phosh 起不来，先用
+`journalctl -u greetd` 和 `cat /sys/class/drm/card0-DSI-1/status` 排查。
+
 ## 已经装进 rootfs
 
 - `wpasupplicant`、`iw`、`wireless-regdb`

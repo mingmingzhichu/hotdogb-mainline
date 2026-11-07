@@ -41,6 +41,7 @@ set -e
 apt-get update
 apt-get install -y --no-install-recommends \
 	openssh-server systemd-sysv \
+	phosh squeekboard greetd \
 	wpasupplicant iw wireless-regdb \
 	alsa-ucm-conf alsa-utils \
 	iio-sensor-proxy \
@@ -94,6 +95,19 @@ ln -sf /dev/null /etc/systemd/system/systemd-binfmt.service
 ln -sf /dev/null /etc/systemd/system/systemd-networkd.service
 ln -sf /dev/null /etc/systemd/system/systemd-networkd.socket
 ln -sf /dev/null /etc/systemd/system/systemd-networkd-wait-online.service
+
+# Phosh + squeekboard on the panel, started by greetd on tty1.
+mkdir -p /etc/greetd
+cat > /etc/greetd/config.toml <<EOF
+[terminal]
+vt = 1
+
+[default_session]
+command = "phosh"
+user = "root"
+EOF
+systemctl enable greetd
+systemctl set-default graphical.target
 
 rm -f /usr/bin/qemu-aarch64-static
 rm -rf /var/lib/apt/lists/*
