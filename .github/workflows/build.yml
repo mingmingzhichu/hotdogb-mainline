@@ -95,6 +95,14 @@ jobs:
           echo "modules: $(find ../out/modules -name '*.ko' | wc -l)"
           du -sh ../out/modules ../out/modules.tar.gz
 
+      - name: Build the Debian netboot rootfs
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            debootstrap qemu-user-static binfmt-support
+          sudo update-binfmts --enable qemu-aarch64 || true
+          sudo sh tools/build_debian_rootfs.sh /tmp/debroot out/netboot-debian.img 2G
+          xz -T0 -6 out/netboot-debian.img
+
       - name: Assemble the artifacts
         run: |
           mkdir -p out
@@ -113,6 +121,12 @@ jobs:
             --dtb out/sm8150-oneplus-hotdogb.dtb \
             --cmdline "$CMDS" \
             --output out/boot-hotdogb.img
+          python3 tools/mkbootimg_v2.py \
+            --kernel out/Image.patched \
+            --ramdisk out/initramfs.cpio.gz \
+            --dtb out/sm8150-oneplus-hotdogb.dtb \
+            --cmdline "$CMDS hotdogb.netboot=1 hotdogb.netboot.host=172.16.42.2" \
+            --output out/boot-hotdogb-netboot.img
           find out -maxdepth 1 -type f ! -name SHA256SUMS -print0 |
             xargs -0 sha256sum | tee out/SHA256SUMS
           ls -l out

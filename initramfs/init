@@ -55,7 +55,7 @@ if [ -n "$NETBOOT" ]; then
 	NB_HOST=$(cmdline_var hotdogb.netboot.host)
 	NB_PORT=$(cmdline_var hotdogb.netboot.port)
 	NB_DEV=$(cmdline_var hotdogb.netboot.dev)
-	NB_INIT=$(cmdline_var init)
+	NB_INIT=$(cmdline_var hotdogb.netboot.init)
 	: "${NB_HOST:=172.16.42.2}"
 	: "${NB_PORT:=9999}"
 	: "${NB_DEV:=/dev/nbd0}"
@@ -309,6 +309,9 @@ if [ -n "$UDC" ] && [ -n "$NETBOOT" ]; then
 				sleep 1
 			done
 			mkdir -p /newroot
+			# Opening the whole disk makes the kernel scan the GPT and
+			# create /dev/nbd0pN; just reading the size does not.
+			dd if="$NB_DEV" of=/dev/null bs=512 count=8 2>/dev/null
 			target=$NB_DEV
 			[ -b "${NB_DEV}p1" ] && target="${NB_DEV}p1"
 			if mount -t ext4 -o rw "$target" /newroot; then

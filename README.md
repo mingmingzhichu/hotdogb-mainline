@@ -252,7 +252,12 @@ initramfs 里连上 NBD 后 `switch_root`，不需要写任何分区。
 hotdogb.netboot=1 hotdogb.netboot.host=172.16.42.2 hotdogb.netboot.port=9999
 ```
 
-可选：`hotdogb.netboot.init=/bin/sh`（默认 `/sbin/init`）。
+可选：`hotdogb.netboot.init=/bin/bash`（默认 `/sbin/init`）。
+不要依赖内核 cmdline 里的 `init=`：ABL 自己会追加 `init=/init`，所以要用
+`hotdogb.netboot.init=` 单独指定。
+
+CI 会同时产出 `boot-hotdogb-netboot.img` 和 `netboot-debian.img.xz`（Debian trixie
+arm64，root/root，已配好 `172.16.42.1` 和 `serial-getty@ttyGS0`）。
 
 Windows 主机步骤：
 
