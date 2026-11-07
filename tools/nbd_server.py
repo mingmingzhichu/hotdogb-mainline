@@ -12,6 +12,7 @@ The device side is initramfs/init with `hotdogb.netboot=1` on the cmdline.
 """
 
 import argparse
+import collections
 import os
 import socket
 import struct
@@ -81,40 +82,49 @@ def serve_client(conn, image, size, read_only, verbose=False):
     log("client attached%s" % (" (read-only)" if read_only else ""))
 
     count = 0
-    while True:
-        magic, req_flags, cmd, handle, offset, length = struct.unpack(
-            ">IHHQQI", recv_exact(conn, 28)
-        )
-        if verbose and count < 20:
-            log("req cmd=%d off=%d len=%d flags=%d" % (cmd, offset, length, req_flags))
-        count += 1
-        if magic != NBD_REQUEST_MAGIC:
-            log("bad request magic 0x%08x" % magic)
-            return
+    recent = collections.deque(maxlen=20)
+    try:
+        while True:
+            magic, req_flags, cmd, handle, offset, length = struct.unpack(
+                ">IHHQQI", recv_exact(conn, 28)
+            )
+            recent.append((cmd, offset, length, req_flags))
+            if verbose and (cmd != NBD_CMD_READ or count < 20):
+                log("req cmd=%d off=%d len=%d flags=%d" %
+                    (cmd, offset, length, req_flags))
+            count += 1
+            if magic != NBD_REQUEST_MAGIC:
+                log("bad request magic 0x%08x" % magic)
+                return
 
-        if cmd == NBD_CMD_READ:
-            if offset + length > size:
+            if cmd == NBD_CMD_READ:
+                if offset + length > size:
+                    send_reply(conn, EINVAL, handle)
+                    continue
+                image.seek(offset)
+                send_reply(conn, 0, handle, image.read(length))
+            elif cmd == NBD_CMD_WRITE:
+                data = recv_exact(conn, length)
+                if read_only or offset + length > size:
+                    send_reply(conn, EIO if read_only else EINVAL, handle)
+                    continue
+                image.seek(offset)
+                image.write(data)
+                send_reply(conn, 0, handle)
+            elif cmd == NBD_CMD_FLUSH:
+                image.flush()
+                send_reply(conn, 0, handle)
+            elif cmd == NBD_CMD_TRIM:
+                send_reply(conn, 0, handle)
+            elif cmd == NBD_CMD_DISC:
+                return
+            else:
                 send_reply(conn, EINVAL, handle)
-                continue
-            image.seek(offset)
-            send_reply(conn, 0, handle, image.read(length))
-        elif cmd == NBD_CMD_WRITE:
-            data = recv_exact(conn, length)
-            if read_only or offset + length > size:
-                send_reply(conn, EIO if read_only else EINVAL, handle)
-                continue
-            image.seek(offset)
-            image.write(data)
-            send_reply(conn, 0, handle)
-        elif cmd == NBD_CMD_FLUSH:
-            image.flush()
-            send_reply(conn, 0, handle)
-        elif cmd == NBD_CMD_TRIM:
-            send_reply(conn, 0, handle)
-        elif cmd == NBD_CMD_DISC:
-            return
-        else:
-            send_reply(conn, EINVAL, handle)
+    except (ConnectionError, OSError) as err:
+        log("client error after %d requests: %s" % (count, err))
+        for c, o, ln, fl in recent:
+            log("  last: cmd=%d off=%d len=%d flags=%d" % (c, o, ln, fl))
+        raise
 
 
 def main():

@@ -264,6 +264,23 @@ sudo IFACE=usb0 tools/netboot_host.sh netboot-debian.img
 脚本会自动找 `cdc_ncm`/`rndis_host`/`cdc_ether` 网卡，设 `172.16.42.2/24`，
 然后启动 NBD server。
 
+同一台 Windows 也可以走 WSL2 + usbipd-win，让 Linux 的 `cdc_ncm` 接管设备：
+
+```powershell
+usbipd list
+usbipd bind --busid <BUSID> --force     # 管理员，一次
+usbipd attach --wsl --busid <BUSID>
+```
+
+```sh
+# WSL2 里
+sudo IFACE=enx... tools/netboot_host.sh /mnt/c/.../netboot-debian.img
+```
+
+已实测：Windows 自带的 NCM 驱动会在 systemd 启动时重置连接；换 WSL2 的
+Linux 驱动后，Debian 正常启动，`systemctl is-system-running` 为 `running`、
+`systemctl --failed` 为空。
+
 可选：`hotdogb.netboot.init=/bin/bash`（默认 `/sbin/init`）。
 不要依赖内核 cmdline 里的 `init=`：ABL 自己会追加 `init=/init`，所以要用
 `hotdogb.netboot.init=` 单独指定。
