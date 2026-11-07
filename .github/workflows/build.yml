@@ -79,15 +79,15 @@ jobs:
           make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=$CROSS \
             Image qcom/sm8150-oneplus-hotdogb.dtb modules
 
-      - name: Build a static aarch64 busybox
+      - name: Fetch Debian static aarch64 busybox
         run: |
-          wget -q "https://busybox.net/downloads/busybox-${BUSYBOX_VERSION}.tar.bz2"
-          tar xf "busybox-${BUSYBOX_VERSION}.tar.bz2"
-          cd "busybox-${BUSYBOX_VERSION}"
-          make ARCH=arm64 CROSS_COMPILE=$CROSS defconfig
-          sed -i 's/^# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
-          make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=$CROSS
-          file busybox
+          sudo dpkg --add-architecture arm64
+          echo 'deb [arch=arm64 trusted=yes] https://deb.debian.org/debian trixie main' |
+            sudo tee /etc/apt/sources.list.d/debian-arm64.list
+          sudo apt-get update
+          apt-get download busybox-static:arm64
+          dpkg-deb -x busybox-static_*_arm64.deb busybox-static-arm64
+          file busybox-static-arm64/bin/busybox
 
       - name: Install the modules
         run: |
@@ -105,7 +105,7 @@ jobs:
           cp linux/arch/arm64/boot/Image out/Image
           cp linux/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dtb out/
           cp linux/.config out/config
-          sh tools/build_initramfs.sh "busybox-${BUSYBOX_VERSION}/busybox" out/initramfs.cpio.gz
+          sh tools/build_initramfs.sh busybox-static-arm64/bin/busybox out/initramfs.cpio.gz
 
       - name: Patch the Image header and pack boot.img
         run: |
