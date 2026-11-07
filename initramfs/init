@@ -268,8 +268,8 @@ if [ -n "$UDC" ]; then
 	echo "$UDC" > "$G/UDC"
 	say "gadget bound to $UDC"
 	if [ -n "$NETBOOT" ]; then
-		# Rescue shell on the ACM port.  The netboot flow has no
-		# command service, so this is the only way to poke at it.
+		# Interactive shell on the ACM port for debugging.  The
+		# netboot flow has no command service of its own.
 		( sleep 2; sh -i </dev/ttyGS0 >/dev/ttyGS0 2>&1 ) &
 	fi
 else
@@ -292,7 +292,7 @@ if [ -n "$UDC" ] && [ -n "$NETBOOT" ]; then
 
 		n=0
 		while :; do
-			nbd-client -b 4096 -t 30 "$NB_HOST" "$NB_PORT" "$NB_DEV" \
+			nbd-client -b 4096 -t 0 "$NB_HOST" "$NB_PORT" "$NB_DEV" \
 				>/tmp/nbd.log 2>&1 || {
 				n=$((n + 1))
 				[ $((n % 15)) -eq 1 ] && \
