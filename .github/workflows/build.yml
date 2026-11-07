@@ -7,14 +7,9 @@ on:
         description: Kernel source archive (GitLab/GitHub archive URL)
         required: false
         default: https://gitlab.postmarketos.org/soc/qualcomm-sm8150/linux/-/archive/8e126dbc4044ef2cec3ebe5754ddb05faa554af6/linux-8e126dbc4044ef2cec3ebe5754ddb05faa554af6.tar.gz
-      busybox_version:
-        description: BusyBox version used for the initramfs
-        required: false
-        default: 1.36.1
 
 env:
   KERNEL_TARBALL: ${{ inputs.kernel_tarball || 'https://gitlab.postmarketos.org/soc/qualcomm-sm8150/linux/-/archive/8e126dbc4044ef2cec3ebe5754ddb05faa554af6/linux-8e126dbc4044ef2cec3ebe5754ddb05faa554af6.tar.gz' }}
-  BUSYBOX_VERSION: ${{ inputs.busybox_version || '1.36.1' }}
   CROSS: aarch64-linux-gnu-
   CMDS: "clk_ignore_unused loglevel=7 panic=0 printk.time=1 ramoops.max_reason=5 log_buf_len=4M"
 
@@ -87,7 +82,7 @@ jobs:
           sudo apt-get update
           apt-get download busybox-static:arm64
           dpkg-deb -x busybox-static_*_arm64.deb busybox-static-arm64
-          file busybox-static-arm64/bin/busybox
+          file busybox-static-arm64/usr/bin/busybox
 
       - name: Install the modules
         run: |
@@ -105,7 +100,8 @@ jobs:
           cp linux/arch/arm64/boot/Image out/Image
           cp linux/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dtb out/
           cp linux/.config out/config
-          sh tools/build_initramfs.sh busybox-static-arm64/bin/busybox out/initramfs.cpio.gz
+          BB=$(find busybox-static-arm64 -type f -name busybox | head -1)
+          sh tools/build_initramfs.sh "$BB" out/initramfs.cpio.gz
 
       - name: Patch the Image header and pack boot.img
         run: |
