@@ -252,6 +252,18 @@ initramfs 里连上 NBD 后 `switch_root`，不需要写任何分区。
 hotdogb.netboot=1 hotdogb.netboot.host=172.16.42.2 hotdogb.netboot.port=9999
 ```
 
+默认用 CDC-NCM；老一点的 Windows 或需要 RNDIS 时加
+`hotdogb.netboot.net=rndis`。
+
+Linux 主机（推荐，避开 Windows 的 NCM 驱动）：
+
+```sh
+sudo IFACE=usb0 tools/netboot_host.sh netboot-debian.img
+```
+
+脚本会自动找 `cdc_ncm`/`rndis_host`/`cdc_ether` 网卡，设 `172.16.42.2/24`，
+然后启动 NBD server。
+
 可选：`hotdogb.netboot.init=/bin/bash`（默认 `/sbin/init`）。
 不要依赖内核 cmdline 里的 `init=`：ABL 自己会追加 `init=/init`，所以要用
 `hotdogb.netboot.init=` 单独指定。
