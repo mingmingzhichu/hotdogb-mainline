@@ -27,7 +27,12 @@ cp /etc/resolv.conf "$ROOT/etc/resolv.conf"
 chroot "$ROOT" /bin/bash -c '
 set -e
 apt-get update
-apt-get install -y --no-install-recommends openssh-server systemd-sysv
+apt-get install -y --no-install-recommends \
+	openssh-server systemd-sysv \
+	wpasupplicant iw wireless-regdb \
+	alsa-ucm-conf alsa-utils \
+	iio-sensor-proxy \
+	rmtfs tqftpserv
 apt-get clean
 '
 
@@ -81,6 +86,9 @@ ln -sf /dev/null /etc/systemd/system/systemd-networkd-wait-online.service
 rm -f /usr/bin/qemu-aarch64-static
 rm -rf /var/lib/apt/lists/*
 '
+
+install -m 0755 "$(dirname "$0")/hotdogb-audio.sh" \
+	"$ROOT/usr/local/sbin/hotdogb-audio"
 
 truncate -s "$SIZE" "$IMG"
 mke2fs -q -t ext4 -F -L hotdogb-root -d "$ROOT" "$IMG"
