@@ -245,13 +245,33 @@ if [ -n "$UDC" ]; then
 		ln -sf "$G/functions/mass_storage.0" "$G/configs/c.1/" 2>/dev/null
 	fi
 	if [ -n "$NETBOOT" ]; then
-		# Windows and Linux both bind this as an Ethernet interface.
-		mkdir -p "$G/functions/rndis.usb0"
-		ln -sf "$G/functions/rndis.usb0" "$G/configs/c.1/" 2>/dev/null
-		echo "acm+rndis" > "$G/configs/c.1/strings/0x409/configuration"
+		# Windows 10 has a native CDC-NCM driver that matches the
+		# Microsoft "WINNCM" compatible ID; its RNDIS template INF
+		# does not match the OS descriptor, so NCM is the reliable
+		# choice here.  Changing the product ID also gives Windows a
+		# fresh device instance instead of the cached one.
+		echo 0x0106 > "$G/idProduct"
+		mkdir -p "$G/functions/ncm.usb0"
+		mkdir -p "$G/functions/ncm.usb0/os_desc/interface.ncm"
+		echo WINNCM > "$G/functions/ncm.usb0/os_desc/interface.ncm/compatible_id"
+		mkdir -p "$G/os_desc"
+		echo 0xcd > "$G/os_desc/b_vendor_code"
+		echo MSFT100 > "$G/os_desc/qw_sign"
+		echo 1 > "$G/os_desc/use"
+		# os_desc_config is only set when the configuration is linked
+		# into the os_desc group; without this Windows never sees the
+		# Microsoft OS descriptors.
+		ln -sf "$G/configs/c.1" "$G/os_desc"
+		ln -sf "$G/functions/ncm.usb0" "$G/configs/c.1/" 2>/dev/null
+		echo "acm+ncm" > "$G/configs/c.1/strings/0x409/configuration"
 	fi
 	echo "$UDC" > "$G/UDC"
 	say "gadget bound to $UDC"
+	if [ -n "$NETBOOT" ]; then
+		# Rescue shell on the ACM port.  The netboot flow has no
+		# command service, so this is the only way to poke at it.
+		( sleep 2; sh -i </dev/ttyGS0 >/dev/ttyGS0 2>&1 ) &
+	fi
 else
 	say "no UDC found, serial console unavailable"
 fi
@@ -271,28 +291,39 @@ if [ -n "$UDC" ] && [ -n "$NETBOOT" ]; then
 		say "netboot: usb0 up"
 
 		n=0
-		while [ $n -lt 15 ]; do
+		while :; do
 			nbd-client -b 4096 -t 30 "$NB_HOST" "$NB_PORT" "$NB_DEV" \
-				>/tmp/nbd.log 2>&1 && break
-			n=$((n + 1))
-			sleep 2
-		done
-
-		if [ $n -lt 15 ]; then
+				>/tmp/nbd.log 2>&1 || {
+				n=$((n + 1))
+				[ $((n % 15)) -eq 1 ] && \
+					say "netboot: waiting for $NB_HOST:$NB_PORT (try $n)"
+				sleep 2
+				continue
+			}
+			# nbd-client daemonises, so the device may still report
+			# size 0 for a moment; mounting then reads garbage.
+			i=0
+			while [ $i -lt 20 ]; do
+				[ "$(cat "/sys/block/${NB_DEV##*/}/size" 2>/dev/null)" != "0" ] && break
+				i=$((i + 1))
+				sleep 1
+			done
 			mkdir -p /newroot
 			target=$NB_DEV
 			[ -b "${NB_DEV}p1" ] && target="${NB_DEV}p1"
 			if mount -t ext4 -o rw "$target" /newroot; then
-				say "netboot: mounted $target, switching root"
-				mount -t proc proc /newroot/proc 2>/dev/null
-				mount -t sysfs sysfs /newroot/sys 2>/dev/null
-				mount -t devtmpfs devtmpfs /newroot/dev 2>/dev/null
-				exec switch_root /newroot "$NB_INIT"
+				break
 			fi
-			say "netboot: mount $target failed"
-		else
-			say "netboot: nbd-client failed: $(cat /tmp/nbd.log 2>/dev/null)"
-		fi
+			say "netboot: mount $target failed, reconnecting"
+			nbd-client -d "$NB_DEV" >/dev/null 2>&1
+			sleep 2
+		done
+
+		say "netboot: mounted $target, switching root"
+		mount -t proc proc /newroot/proc 2>/dev/null
+		mount -t sysfs sysfs /newroot/sys 2>/dev/null
+		mount -t devtmpfs devtmpfs /newroot/dev 2>/dev/null
+		exec switch_root /newroot "$NB_INIT"
 	else
 		say "netboot: usb0 never appeared"
 	fi

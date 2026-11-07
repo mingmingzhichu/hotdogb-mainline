@@ -230,13 +230,13 @@ $ /bin/vbltest /dev/dri/card0 3
 
 ## Netboot：从 PC 挂载 rootfs（NBD）
 
-沿用 postmarketOS 的方案：设备端用 USB RNDIS 网卡，PC 上跑 NBD server 导出 rootfs 镜像，
+沿用 postmarketOS 的方案：设备端用 USB 网卡，PC 上跑 NBD server 导出 rootfs 镜像，
 initramfs 里连上 NBD 后 `switch_root`，不需要写任何分区。
 
 ```
-设备 172.16.42.1  --USB RNDIS-->  PC 172.16.42.2:9999 (nbd-server)
-                                      |
-                                 rootfs.img (raw ext4)
+设备 172.16.42.1  --USB CDC-NCM-->  PC 172.16.42.2:9999 (nbd-server)
+                                        |
+                                   rootfs.img (raw ext4)
 ```
 
 构件：
@@ -256,14 +256,25 @@ hotdogb.netboot=1 hotdogb.netboot.host=172.16.42.2 hotdogb.netboot.port=9999
 
 Windows 主机步骤：
 
-1. `fastboot boot` 之后系统里会出现 “USB Ethernet/RNDIS Gadget” 网卡，
-   把它的 IPv4 手动设成 `172.16.42.2/24`（不需要网关、不需要 DHCP）。
+1. `fastboot boot` 之后系统里会出现 “UsbNcm Host Device”（以太网 N）网卡，
+   用管理员 PowerShell 设静态地址和防火墙：
+   ```powershell
+   netsh interface ip set address name="以太网 N" static 172.16.42.2 255.255.255.0
+   New-NetFirewallRule -DisplayName "hotdogb nbd" -Direction Inbound `
+       -Protocol TCP -LocalPort 9999 -Action Allow -Profile Any
+   ```
 2. 在同一台机器上运行：
    ```
    py tools\nbd_server.py --image netboot.img --bind 172.16.42.2
    ```
-3. 防火墙放行 Python（专用网络），或手动放行 TCP 9999。
-4. 设备串口会打印 `netboot: mounted /dev/nbd0, switching root`。
+3. 设备串口会打印 `netboot: mounted /dev/nbd0, switching root`。
+
+已实测：Windows 10 19044 + CDC-NCM，Alpine minirootfs 从 NBD 启动，
+`/dev/nbd0 on / type ext4 (rw)`。
+
+不要用 RNDIS：Windows 10 的 `netrndis.inf` 是 IHV 模板 INF，不匹配
+`USB\MS_COMP_RNDIS`，只会得到 `CM_PROB_FAILED_INSTALL`。NCM 的
+`usbncm.inf` 明确匹配 `USB\MS_COMP_WINNCM`。
 
 NBD 连接失败时 initramfs 不会退出，串口控制台照常可用，`/tmp/nbd.log` 里有原因。
 

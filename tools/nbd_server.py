@@ -58,7 +58,7 @@ def send_reply(sock, error, handle, payload=b""):
     sock.sendall(struct.pack(">IIQ", NBD_REPLY_MAGIC, error, handle) + payload)
 
 
-def serve_client(conn, image, size, read_only):
+def serve_client(conn, image, size, read_only, verbose=False):
     conn.sendall(NBDMAGIC + IHAVEOPT + struct.pack(">H", 1))
     recv_exact(conn, 4)  # client flags
 
@@ -80,10 +80,14 @@ def serve_client(conn, image, size, read_only):
 
     log("client attached%s" % (" (read-only)" if read_only else ""))
 
+    count = 0
     while True:
         magic, req_flags, cmd, handle, offset, length = struct.unpack(
             ">IHHQQI", recv_exact(conn, 28)
         )
+        if verbose and count < 20:
+            log("req cmd=%d off=%d len=%d flags=%d" % (cmd, offset, length, req_flags))
+        count += 1
         if magic != NBD_REQUEST_MAGIC:
             log("bad request magic 0x%08x" % magic)
             return
@@ -119,6 +123,7 @@ def main():
     parser.add_argument("--bind", default="0.0.0.0", help="address to listen on")
     parser.add_argument("--port", type=int, default=9999, help="TCP port")
     parser.add_argument("--read-only", action="store_true", help="refuse writes")
+    parser.add_argument("--verbose", action="store_true", help="log NBD requests")
     args = parser.parse_args()
 
     size = os.path.getsize(args.image)
@@ -135,7 +140,7 @@ def main():
         log("connection from %s:%d" % peer)
         with open(args.image, mode) as image:
             try:
-                serve_client(conn, image, size, args.read_only)
+                serve_client(conn, image, size, args.read_only, args.verbose)
             except (ConnectionError, OSError) as err:
                 log("client error: %s" % err)
             finally:
