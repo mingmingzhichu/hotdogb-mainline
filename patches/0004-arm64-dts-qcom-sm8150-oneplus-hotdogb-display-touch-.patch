@@ -1,7 +1,7 @@
 From 6c206f4c260ea87b29a08c13666fd57cb3dcddb8 Mon Sep 17 00:00:00 2001
 From: mingmingzhichu <lihaoyu0717@outlook.com>
 Date: Sat, 31 Oct 2026 16:36:53 +0800
-Subject: [PATCH 4/5] arm64: dts: qcom: sm8150-oneplus-hotdogb: display, touch,
+Subject: [PATCH] arm64: dts: qcom: sm8150-oneplus-hotdogb: display, touch,
  keys, battery
 
 Enable the display path (DPU, DSI0, 7nm PHY and the Samsung SOFEF03F panel),
@@ -16,6 +16,8 @@ The SMB5 charger driver is left disabled as well: reading POWER_PATH_STATUS
 wedges the SPMI bus on this board.  Charging keeps running with the hardware
 defaults and the fuel gauge still reports capacity, voltage, current and
 temperature.
+
+Signed-off-by: mingmingzhichu <lihaoyu0717@outlook.com>
 ---
  .../boot/dts/qcom/sm8150-oneplus-hotdogb.dts  | 342 ++++++++++++++++--
  1 file changed, 311 insertions(+), 31 deletions(-)

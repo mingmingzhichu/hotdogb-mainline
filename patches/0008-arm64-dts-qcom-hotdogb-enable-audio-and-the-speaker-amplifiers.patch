@@ -1,8 +1,8 @@
-From ead0109e8ee7489847f5c7421eb1c1d02b89e59f Mon Sep 17 00:00:00 2001
+From a14a148315ba996274ca389c92c0eab6ca85c667 Mon Sep 17 00:00:00 2001
 From: mingmingzhichu <lihaoyu0717@outlook.com>
-Date: Sat, 7 Nov 2026 13:53:06 +0800
-Subject: [PATCH 2/2] arm64: dts: qcom: hotdogb: enable the WCD9340 and the
- speaker amplifiers
+Date: Sat, 7 Nov 2026 14:00:16 +0800
+Subject: [PATCH] arm64: dts: qcom: hotdogb: enable audio and the speaker
+ amplifiers
 
 Wire up the audio block the way the vendor device tree describes it:
 WCD9340 on SLIMbus, the two TFA9874 amplifiers on I2C SE4, and the
@@ -15,14 +15,14 @@ never registers.
 
 Signed-off-by: mingmingzhichu <lihaoyu0717@outlook.com>
 ---
- .../boot/dts/qcom/sm8150-oneplus-hotdogb.dts  | 214 ++++++++++++++++++
- 1 file changed, 214 insertions(+)
+ .../boot/dts/qcom/sm8150-oneplus-hotdogb.dts  | 217 ++++++++++++++++++
+ 1 file changed, 217 insertions(+)
 
 diff --git a/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts b/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
-index 45bc12d8d..e8b3e5cf6 100644
+index 45bc12d8d..06a161568 100644
 --- a/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
-@@ -343,3 +343,217 @@ &gmu {
+@@ -343,3 +343,220 @@ &gmu {
  &gpu_zap_shader {
  	firmware-name = "qcom/sm8150/a640_zap.mbn";
  };
@@ -155,9 +155,12 @@ index 45bc12d8d..e8b3e5cf6 100644
 +
 +				qcom,dout-ports = <6>;
 +				qcom,din-ports = <2>;
-+				qcom,ports-sinterval-low = /bits/ 8 <0x07 0x1f 0x3f 0x07 0x1f 0x3f 0x0f 0x0f>;
-+				qcom,ports-offset1 = /bits/ 8 <0x01 0x02 0x0c 0x06 0x12 0x0d 0x07 0x0a>;
-+				qcom,ports-offset2 = /bits/ 8 <0x00 0x00 0x1f 0x00 0x00 0x1f 0x00 0x00>;
++				qcom,ports-sinterval-low =
++					/bits/ 8 <0x07 0x1f 0x3f 0x07 0x1f 0x3f 0x0f 0x0f>;
++				qcom,ports-offset1 =
++					/bits/ 8 <0x01 0x02 0x0c 0x06 0x12 0x0d 0x07 0x0a>;
++				qcom,ports-offset2 =
++					/bits/ 8 <0x00 0x00 0x1f 0x00 0x00 0x1f 0x00 0x00>;
 +
 +				#sound-dai-cells = <1>;
 +				clocks = <&wcd9340>;

@@ -1,7 +1,7 @@
 From 8ba8dca588b7422b2624484b60dce008251d7c93 Mon Sep 17 00:00:00 2001
 From: mingmingzhichu <lihaoyu0717@outlook.com>
 Date: Sat, 31 Oct 2026 16:36:43 +0800
-Subject: [PATCH 2/5] drm/panel: add Samsung SOFEF03F M FHD DSC panel
+Subject: [PATCH] drm/panel: add Samsung SOFEF03F M FHD DSC panel
 
 Add a driver for the 1080x2400 command mode AMOLED panel used on the OnePlus
 7T.  The init sequence, PPS payload and DSC parameters are taken verbatim from
@@ -15,6 +15,8 @@ value is pushed from ->enable() because the backlight core only calls
 The first DSI command burst after power-on occasionally times out, leaving the
 panel uninitialised behind a lit but black screen; retry the init sequence with
 a power cycle up to three times.
+
+Signed-off-by: mingmingzhichu <lihaoyu0717@outlook.com>
 ---
  drivers/gpu/drm/panel/Kconfig                 |  12 +
  drivers/gpu/drm/panel/Makefile                |   1 +

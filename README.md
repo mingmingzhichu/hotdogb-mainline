@@ -30,9 +30,10 @@ boot/       32 字节空 DTBO（跑主线前必须刷，见"启动前"）
 | 0002 | `drm/panel: add driver for the Samsung SOFEF03F DSC panel` | 新驱动 + Kconfig/Makefile |
 | 0003 | `Input: rmi4 - honour the reset-gpios property` | 让 rmi4 真正去拉复位脚 |
 | 0004 | `arm64: dts: ...: display + touchscreen` | 板级 compatible、DPU/DSI/PHY/面板（去掉 simplefb）、i2c17 上的 S3706 |
-| 0005 | `usb: dwc3: force a 32-bit DMA mask on SM8150` | 修第一次 DMA 死锁 |
-| 0006 | `ASoC: tfa9874: add the NXP TFA9874 speaker amplifier` | 新 codec 驱动 + binding + Kconfig/Makefile |
-| 0007 | `arm64: dts: ...: enable audio and speakers` | WCD9340 on SLIMbus、两颗 TFA9874、QUATERNARY_MI2S_RX、声卡 DAI link |
+| 0005 | `usb: dwc3: keep Qualcomm glue DMA in the low 4 GiB` | 只对 `qcom,dwc3` 限制 32 位掩码，修第一次 DMA 死锁 |
+| 0006 | `dt-bindings: sound: add the NXP TFA9874 amplifier` | 新增 YAML binding |
+| 0007 | `ASoC: tfa9874: add the NXP TFA9874 speaker amplifier` | 新 codec 驱动 + Kconfig/Makefile |
+| 0008 | `arm64: dts: ...: enable audio and the speaker amplifiers` | WCD9340 on SLIMbus、两颗 TFA9874、QUATERNARY_MI2S_RX、声卡 DAI link |
 
 补丁基于 `Sr-0w/hotdog-linux-bringup` 的 7.0.0 树（`8e126dbc4`）。
 
@@ -106,7 +107,7 @@ fastboot flash boot boot.img         # 内核 + DTB 打包在 boot 里
 
 已经做过的：
 
-- 7 个补丁在干净的 HEAD worktree 上 `git am` 全部通过，无冲突
+- 8 个补丁在干净的 HEAD worktree 上 `git am` 全部通过，无冲突
 - 打完补丁后的 DTS 里没有 `qcom,msm-id`、也没有 `hotdobg` 这个错拼
 - `checkpatch.pl --no-tree --strict`：0 error，只有一条 "MAINTAINERS 是否需要更新" 的提示（面板目录已被 `DRM PANEL DRIVERS` 的 `F: drivers/gpu/drm/panel/` 覆盖，属误报）
 - 打完补丁后 `sm8150-oneplus-hotdogb.dtb`、`panel-samsung-sofef03f.o`、`rmi_i2c.o` 都能编译
