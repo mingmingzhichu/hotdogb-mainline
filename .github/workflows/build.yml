@@ -18,21 +18,24 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: arm64 Image + dtb + boot.img
+  clean:
+    name: clean the previous release
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
-
     steps:
-      - name: Check out the patch set
-        uses: actions/checkout@v4
-
-      - name: Clean the previous release
+      - uses: actions/checkout@v4
+      - name: Delete the previous release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete "$RELEASE_TAG" --yes --cleanup-tag || true
           git push origin ":refs/tags/$RELEASE_TAG" 2>/dev/null || true
+
+  kernel:
+    name: kernel + dtb + modules
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Install the cross toolchain
         run: |
@@ -45,11 +48,7 @@ jobs:
 
       - name: Fetch the pinned kernel tree
         run: |
-          # The postmarketOS GitLab instance serves source archives quickly; a
-          # shallow git fetch of a specific commit is slow/unreliable from
-          # hosted runners, so download the archive instead.
           curl -fL --retry 3 --retry-delay 5 -o linux.tar.gz "$KERNEL_TARBALL"
-          ls -l linux.tar.gz
           tar xzf linux.tar.gz
           dir=$(tar tzf linux.tar.gz | head -1 | cut -d/ -f1)
           mv "$dir" linux
@@ -66,7 +65,6 @@ jobs:
               exit 1
             }
           done
-          echo "patches applied"
           grep -c sofef03f drivers/gpu/drm/panel/Makefile
 
       - name: Configure
@@ -86,11 +84,35 @@ jobs:
           make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=$CROSS \
             Image qcom/sm8150-oneplus-hotdogb.dtb modules
 
-      - name: Fetch Debian static aarch64 busybox
+      - name: Install the modules
         run: |
-          # Download the .deb straight from the Debian pool.  Adding the
-          # arm64 architecture to the Ubuntu runner makes apt fetch arm64
-          # indexes for every Ubuntu suite, which do not exist.
+          cd linux
+          make ARCH=arm64 CROSS_COMPILE=$CROSS \
+            INSTALL_MOD_PATH="$PWD/../out/modules" INSTALL_MOD_STRIP=1 \
+            modules_install
+          tar czf ../out/modules.tar.gz -C ../out modules
+          echo "modules: $(find ../out/modules -name '*.ko' | wc -l)"
+
+      - name: Collect the kernel artifacts
+        run: |
+          mkdir -p out
+          cp linux/arch/arm64/boot/Image out/Image
+          cp linux/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dtb out/
+          cp linux/.config out/config
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kernel-out
+          path: out/
+          if-no-files-found: error
+
+  busybox:
+    name: static aarch64 busybox
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fetch the Debian package
+        run: |
           base=https://deb.debian.org/debian/pool/main/b/busybox
           deb=$(curl -s "$base/" |
             grep -o 'busybox-static_[0-9][^"]*_arm64\.deb' |
@@ -100,35 +122,62 @@ jobs:
           dpkg-deb -x busybox.deb busybox-static-arm64
           find busybox-static-arm64 -type f -name busybox -exec file {} \;
 
-      - name: Install the modules
-        run: |
-          cd linux
-          make ARCH=arm64 CROSS_COMPILE=$CROSS \
-            INSTALL_MOD_PATH="$PWD/../out/modules" INSTALL_MOD_STRIP=1 \
-            modules_install
-          tar czf ../out/modules.tar.gz -C ../out modules
-          echo "modules: $(find ../out/modules -name '*.ko' | wc -l)"
-          du -sh ../out/modules ../out/modules.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: busybox
+          path: busybox-static-arm64/
+          if-no-files-found: error
 
-      - name: Build the Debian netboot rootfs
+  rootfs:
+    name: Debian netboot rootfs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the rootfs tools
         run: |
+          sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            debootstrap qemu-user-static binfmt-support
+            debootstrap qemu-user-static binfmt-support xz-utils
+
+      - name: Build the Debian arm64 rootfs
+        run: |
           sudo update-binfmts --enable qemu-aarch64 || true
           sudo sh tools/build_debian_rootfs.sh /tmp/debroot out/netboot-debian.img 6G
           xz -T0 -6 out/netboot-debian.img
 
-      - name: Assemble the artifacts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rootfs
+          path: out/netboot-debian.img.xz
+          if-no-files-found: error
+
+  busybox-pack:
+    name: pack the boot images
+    runs-on: ubuntu-24.04
+    needs: [kernel, busybox]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-out
+          path: kernel-out
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: busybox
+          path: busybox
+
+      - name: Build the initramfs and pack the images
         run: |
           mkdir -p out
-          cp linux/arch/arm64/boot/Image out/Image
-          cp linux/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dtb out/
-          cp linux/.config out/config
-          BB=$(find busybox-static-arm64 -type f -name busybox | head -1)
+          cp kernel-out/Image out/Image
+          cp kernel-out/sm8150-oneplus-hotdogb.dtb out/
+          cp kernel-out/config out/config
+          BB=$(find busybox -type f -name busybox | head -1)
           sh tools/build_initramfs.sh "$BB" out/initramfs.cpio.gz
-
-      - name: Patch the Image header and pack boot.img
-        run: |
           python3 tools/patch_image_header.py --image out/Image --output out/Image.patched
           python3 tools/mkbootimg_v2.py \
             --kernel out/Image.patched \
@@ -146,7 +195,30 @@ jobs:
             xargs -0 sha256sum | tee out/SHA256SUMS
           ls -l out
 
-      - name: Publish the release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: boot
+          path: out/
+          if-no-files-found: error
+
+  release:
+    name: publish the release
+    runs-on: ubuntu-24.04
+    needs: [clean, busybox-pack, rootfs]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: boot
+          path: boot-out
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: rootfs
+          path: rootfs-out
+
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -154,7 +226,7 @@ jobs:
             --title "hotdogb CI build" \
             --notes "Built from ${{ github.sha }}" \
             --prerelease
-          for f in out/*; do
+          for f in boot-out/* rootfs-out/*; do
             [ -f "$f" ] || continue
             if [ "$(stat -c%s "$f")" -gt 2000000000 ]; then
               echo "skipping $f (over the 2 GiB asset limit)"
@@ -170,8 +242,7 @@ jobs:
     continue-on-error: true
 
     steps:
-      - name: Check out the patch set
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Install checkpatch dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends perl curl
