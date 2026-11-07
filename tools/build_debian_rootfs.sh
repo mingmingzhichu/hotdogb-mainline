@@ -23,6 +23,18 @@ debootstrap --arch=arm64 --foreign "$SUITE" "$ROOT" "$MIRROR"
 cp /usr/bin/qemu-aarch64-static "$ROOT/usr/bin/"
 chroot "$ROOT" /debootstrap/debootstrap --second-stage
 
+# Give the chroot a real /proc, /sys and /dev so apt and the maintainer
+# scripts do not warn (and behave like a normal system).
+mount -t proc proc "$ROOT/proc"
+mount -t sysfs sysfs "$ROOT/sys"
+mount --bind /dev "$ROOT/dev"
+cleanup() {
+	umount "$ROOT/dev" 2>/dev/null || true
+	umount "$ROOT/sys" 2>/dev/null || true
+	umount "$ROOT/proc" 2>/dev/null || true
+}
+trap cleanup EXIT
+
 cp /etc/resolv.conf "$ROOT/etc/resolv.conf"
 chroot "$ROOT" /bin/bash -c '
 set -e
@@ -90,6 +102,16 @@ rm -rf /var/lib/apt/lists/*
 install -m 0755 "$(dirname "$0")/hotdogb-audio.sh" \
 	"$ROOT/usr/local/sbin/hotdogb-audio"
 
+# The mounts must be gone before mke2fs walks the tree.
+cleanup
+trap - EXIT
+
 truncate -s "$SIZE" "$IMG"
 mke2fs -q -t ext4 -F -L hotdogb-root -d "$ROOT" "$IMG"
+
+# The script runs with sudo; give the image back to the invoking user so
+# the later xz/sha256sum steps (which run unprivileged) can own the output.
+if [ -n "${SUDO_UID:-}" ]; then
+	chown "$SUDO_UID:${SUDO_GID:-$SUDO_UID}" "$IMG"
+fi
 echo "wrote $IMG ($(du -h "$IMG" | cut -f1))"
