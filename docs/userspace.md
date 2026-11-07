@@ -3,6 +3,27 @@
 netboot 的根文件系统是 Debian trixie（`tools/build_debian_rootfs.sh`）。
 这里记录还需要在 Debian 里补的东西和手动步骤。
 
+## GPU：Freedreno + Turnip
+
+rootfs 预装 Mesa 的 Freedreno（GL/EGL）和 Turnip（Vulkan），以及
+`vulkan-tools`：
+
+- `libgl1-mesa-dri`：`freedreno_dri.so`（Adreno 640，a6xx）
+- `mesa-vulkan-drivers`：`libvulkan_freedreno.so`（Turnip）
+- `mesa-utils`、`vulkan-tools`：`eglinfo`、`vulkaninfo` 方便验证
+- `/lib/firmware/qcom/a630_sqe.fw`、`a640_gmu.bin`、
+  `sm8150/a640_zap.mbn` 由仓库 `firmware/` 拷入
+
+内核侧 `&gpu`/`&gmu`/`&gpu_zap_shader` 已经 enable。上机验证：
+
+```sh
+cat /sys/class/drm/card0/device/gpu_model 2>/dev/null
+eglinfo -B 2>/dev/null | head -20
+vulkaninfo --summary 2>/dev/null | head -20
+```
+
+如果 `vulkaninfo` 找不到设备，先看 `dmesg | grep -i -e msm -e adreno -e zap`。
+
 ## 图形界面 / 屏幕键盘
 
 CI 的 rootfs 会装 **KDE Plasma Mobile**：

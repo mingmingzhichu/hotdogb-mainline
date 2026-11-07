@@ -42,6 +42,8 @@ apt-get update
 apt-get install -y --no-install-recommends \
 	openssh-server systemd-sysv \
 	plasma-mobile maliit-keyboard greetd \
+	mesa-utils libgl1-mesa-dri mesa-vulkan-drivers vulkan-tools \
+	libegl-mesa0 libgles2 libgbm1 \
 	wpasupplicant iw wireless-regdb \
 	alsa-ucm-conf alsa-utils \
 	iio-sensor-proxy \
@@ -115,6 +117,14 @@ rm -rf /var/lib/apt/lists/*
 
 install -m 0755 "$(dirname "$0")/hotdogb-audio.sh" \
 	"$ROOT/usr/local/sbin/hotdogb-audio"
+
+# Adreno 640 firmware for the msm/freedreno stack.
+FIRMWARE=$(cd "$(dirname "$0")/../firmware" && pwd)
+install -d "$ROOT/lib/firmware/qcom/sm8150"
+install -m 0644 "$FIRMWARE/qcom/a630_sqe.fw" "$ROOT/lib/firmware/qcom/"
+install -m 0644 "$FIRMWARE/qcom/a640_gmu.bin" "$ROOT/lib/firmware/qcom/"
+install -m 0644 "$FIRMWARE/qcom/sm8150/a640_zap.mbn" \
+	"$ROOT/lib/firmware/qcom/sm8150/"
 
 # The mounts must be gone before mke2fs walks the tree.
 cleanup
