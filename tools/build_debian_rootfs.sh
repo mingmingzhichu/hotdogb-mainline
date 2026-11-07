@@ -63,6 +63,14 @@ sysfs      /sys   sysfs defaults          0 0
 devtmpfs   /dev   devtmpfs mode=0755,nosuid 0 0
 EOF
 
+chmod 644 /etc/systemd/network/10-usb0.network \
+	/etc/ssh/sshd_config.d/00-hotdogb.conf /etc/fstab /etc/hostname
+
+# The device kernel has no binfmt_misc; mask the units instead of leaving
+# systemd degraded at every boot.
+ln -sf /dev/null /etc/systemd/system/proc-sys-fs-binfmt_misc.mount
+ln -sf /dev/null /etc/systemd/system/systemd-binfmt.service
+
 rm -f /usr/bin/qemu-aarch64-static
 rm -rf /var/lib/apt/lists/*
 '
