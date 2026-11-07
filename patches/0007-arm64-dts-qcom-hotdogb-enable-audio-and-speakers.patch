@@ -1,0 +1,242 @@
+From ead0109e8ee7489847f5c7421eb1c1d02b89e59f Mon Sep 17 00:00:00 2001
+From: mingmingzhichu <lihaoyu0717@outlook.com>
+Date: Sat, 7 Nov 2026 13:53:06 +0800
+Subject: [PATCH 2/2] arm64: dts: qcom: hotdogb: enable the WCD9340 and the
+ speaker amplifiers
+
+Wire up the audio block the way the vendor device tree describes it:
+WCD9340 on SLIMbus, the two TFA9874 amplifiers on I2C SE4, and the
+QUATERNARY_MI2S_RX front end that feeds them.
+
+The speaker DAI link is kept last on purpose.  The routing component is
+shared by every backend, and it must probe after the q6afe and q6asm DAI
+widgets exist, otherwise its DAPM routes fail with -ENODEV and the card
+never registers.
+
+Signed-off-by: mingmingzhichu <lihaoyu0717@outlook.com>
+---
+ .../boot/dts/qcom/sm8150-oneplus-hotdogb.dts  | 214 ++++++++++++++++++
+ 1 file changed, 214 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts b/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
+index 45bc12d8d..e8b3e5cf6 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
+@@ -343,3 +343,217 @@ &gmu {
+ &gpu_zap_shader {
+ 	firmware-name = "qcom/sm8150/a640_zap.mbn";
+ };
++
++/*
++ * Audio: WCD9340 on SLIMbus plus the two NXP TFA9874 speaker amplifiers on
++ * I2C SE4.  The amplifiers are fed by QUATERNARY_MI2S_RX; both drive the
++ * board's speaker enclosure, so the DAI link lists them as a pair.  Reset
++ * lines are deliberately not described: the lower amplifier's reset is shared
++ * with the active-low FSA4480 enable on GPIO 100, and the bootloader already
++ * leaves both parts responsive.
++ */
++&tlmm {
++	wcd_intr_default: wcd-intr-default-state {
++		pins = "gpio123";
++		function = "gpio";
++		drive-strength = <2>;
++		bias-pull-down;
++	};
++
++	quat_mi2s_active: quat-mi2s-active-state {
++		pins = "gpio137", "gpio138";
++		function = "qua_mi2s";
++		drive-strength = <8>;
++		bias-disable;
++		output-high;
++	};
++
++	quat_mi2s_sd0_active: quat-mi2s-sd0-active-state {
++		pins = "gpio139";
++		function = "qua_mi2s";
++		drive-strength = <8>;
++		bias-disable;
++	};
++
++	quat_mi2s_sd1_active: quat-mi2s-sd1-active-state {
++		pins = "gpio140";
++		function = "qua_mi2s";
++		drive-strength = <8>;
++		bias-disable;
++	};
++};
++
++&qupv3_id_0 {
++	status = "okay";
++};
++
++&i2c4 {
++	status = "okay";
++
++	speaker_top: audio-codec@34 {
++		compatible = "nxp,tfa9874";
++		reg = <0x34>;
++		#sound-dai-cells = <0>;
++	};
++
++	speaker_bottom: audio-codec@35 {
++		compatible = "nxp,tfa9874";
++		reg = <0x35>;
++		#sound-dai-cells = <0>;
++	};
++};
++
++&q6afedai {
++	dai@22 {
++		reg = <22>;		/* QUATERNARY_MI2S_RX */
++		qcom,sd-lines = <1>;
++	};
++};
++
++&slim {
++	status = "okay";
++
++	slim@1 {
++		reg = <1>;
++		#address-cells = <2>;
++		#size-cells = <0>;
++
++		wcd9340_ifd: ifd@0,0 {
++			compatible = "slim217,250";
++			reg = <0 0>;
++		};
++
++		wcd9340: codec@1,0 {
++			compatible = "slim217,250";
++			reg = <1 0>;
++			slim-ifc-dev = <&wcd9340_ifd>;
++
++			#sound-dai-cells = <1>;
++
++			interrupts-extended = <&tlmm 123 IRQ_TYPE_LEVEL_HIGH>;
++			interrupt-controller;
++			#interrupt-cells = <1>;
++
++			clock-names = "extclk";
++			clocks = <&rpmhcc 2>;
++			#clock-cells = <0>;
++			clock-frequency = <9600000>;
++			clock-output-names = "mclk";
++
++			pinctrl-names = "default";
++			pinctrl-0 = <&wcd_intr_default>;
++
++			reset-gpios = <&tlmm 143 GPIO_ACTIVE_LOW>;
++			vdd-buck-supply = <&vreg_s4a_1p8>;
++			vdd-buck-sido-supply = <&vreg_s4a_1p8>;
++			vdd-tx-supply = <&vreg_s4a_1p8>;
++			vdd-rx-supply = <&vreg_s4a_1p8>;
++			vdd-io-supply = <&vreg_s4a_1p8>;
++
++			qcom,micbias1-microvolt = <1800000>;
++			qcom,micbias2-microvolt = <1800000>;
++			qcom,micbias3-microvolt = <1800000>;
++			qcom,micbias4-microvolt = <1800000>;
++
++			#address-cells = <1>;
++			#size-cells = <1>;
++
++			wcdgpio: gpio-controller@42 {
++				compatible = "qcom,wcd9340-gpio";
++				gpio-controller;
++				#gpio-cells = <2>;
++				reg = <0x42 0x2>;
++			};
++
++			swm: soundwire@c85 {
++				compatible = "qcom,soundwire-v1.3.0";
++				reg = <0xc85 0x40>;
++				interrupts-extended = <&wcd9340 20>;
++
++				qcom,dout-ports = <6>;
++				qcom,din-ports = <2>;
++				qcom,ports-sinterval-low = /bits/ 8 <0x07 0x1f 0x3f 0x07 0x1f 0x3f 0x0f 0x0f>;
++				qcom,ports-offset1 = /bits/ 8 <0x01 0x02 0x0c 0x06 0x12 0x0d 0x07 0x0a>;
++				qcom,ports-offset2 = /bits/ 8 <0x00 0x00 0x1f 0x00 0x00 0x1f 0x00 0x00>;
++
++				#sound-dai-cells = <1>;
++				clocks = <&wcd9340>;
++				clock-names = "iface";
++				#address-cells = <2>;
++				#size-cells = <0>;
++			};
++		};
++	};
++};
++
++&sound {
++	compatible = "qcom,sm8150-sndcard";
++	model = "OnePlus 7T";
++	status = "okay";
++
++	pinctrl-names = "default";
++	pinctrl-0 = <&quat_mi2s_active &quat_mi2s_sd0_active
++		     &quat_mi2s_sd1_active>;
++
++	audio-routing = "RX_BIAS", "MCLK";
++
++	mm1-dai-link {
++		link-name = "MultiMedia1";
++
++		cpu {
++			sound-dai = <&q6asmdai 0>;
++		};
++	};
++
++	slim-dai-link {
++		link-name = "SLIM Playback 6";
++
++		cpu {
++			sound-dai = <&q6afedai 14>;	/* SLIMBUS_6_RX */
++		};
++
++		platform {
++			sound-dai = <&q6routing>;
++		};
++
++		codec {
++			sound-dai = <&wcd9340 6>;	/* AIF4_PB */
++		};
++	};
++
++	slimcap-dai-link {
++		link-name = "SLIM Capture 1";
++
++		cpu {
++			sound-dai = <&q6afedai 3>;	/* SLIMBUS_0_TX */
++		};
++
++		platform {
++			sound-dai = <&q6routing>;
++		};
++
++		codec {
++			sound-dai = <&wcd9340 1>;	/* AIF1_CAP */
++		};
++	};
++
++	/*
++	 * Keep the speaker link last: the routing component must probe after
++	 * the q6afe and q6asm DAI widgets exist, or its DAPM routes fail.
++	 */
++	speaker-dai-link {
++		link-name = "Speaker Playback";
++
++		cpu {
++			sound-dai = <&q6afedai 22>;	/* QUATERNARY_MI2S_RX */
++		};
++
++		platform {
++			sound-dai = <&q6routing>;
++		};
++
++		codec {
++			sound-dai = <&speaker_top>, <&speaker_bottom>;
++		};
++	};
++};
