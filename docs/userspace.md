@@ -5,14 +5,16 @@ netboot 的根文件系统是 Debian trixie（`tools/build_debian_rootfs.sh`）�
 
 ## 图形界面 / 屏幕键盘
 
-CI 的 rootfs 会装 `phosh` + `squeekboard` + `greetd`：
+CI 的 rootfs 会装 **KDE Plasma Mobile**：
 
-- `greetd` 在 `tty1` 起 `phosh`（`/etc/greetd/config.toml`）；
-- 屏幕键盘就是 **squeekboard**（Phosh 自带，无需额外配置）；
-- 默认目标改成 `graphical.target`。
+- `plasma-mobile` + `maliit-keyboard`（屏幕键盘）；`startplasmamobile` 内部是
+  `startplasma-wayland --xwayland --inputmethod maliit-keyboard`；
+- `greetd` 在 `tty1` 起 `startplasmamobile`（`/etc/greetd/config.toml`）；
+- 默认目标改成 `graphical.target`；
+- 镜像默认大小提到 6 GiB（Plasma Mobile 依赖较多）。
 
-没有装完整 GNOME，只装了 Phosh 需要的依赖；如果 Phosh 起不来，先用
-`journalctl -u greetd` 和 `cat /sys/class/drm/card0-DSI-1/status` 排查。
+没有装完整 Plasma Desktop，只装 Plasma Mobile 需要的依赖。起不来时先看
+`journalctl -u greetd` 和 `cat /sys/class/drm/card0-DSI-1/status`。
 
 ## 已经装进 rootfs
 

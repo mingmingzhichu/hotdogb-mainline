@@ -9,7 +9,7 @@ set -eu
 
 ROOT=${1:-/tmp/debroot}
 IMG=${2:-out/netboot-debian.img}
-SIZE=${3:-2G}
+SIZE=${3:-6G}
 SUITE=${SUITE:-trixie}
 MIRROR=${MIRROR:-http://deb.debian.org/debian}
 export DEBIAN_FRONTEND=noninteractive
@@ -41,7 +41,7 @@ set -e
 apt-get update
 apt-get install -y --no-install-recommends \
 	openssh-server systemd-sysv \
-	phosh squeekboard greetd \
+	plasma-mobile maliit-keyboard greetd \
 	wpasupplicant iw wireless-regdb \
 	alsa-ucm-conf alsa-utils \
 	iio-sensor-proxy \
@@ -96,14 +96,14 @@ ln -sf /dev/null /etc/systemd/system/systemd-networkd.service
 ln -sf /dev/null /etc/systemd/system/systemd-networkd.socket
 ln -sf /dev/null /etc/systemd/system/systemd-networkd-wait-online.service
 
-# Phosh + squeekboard on the panel, started by greetd on tty1.
+# Plasma Mobile on the panel, started by greetd on tty1.
 mkdir -p /etc/greetd
 cat > /etc/greetd/config.toml <<EOF
 [terminal]
 vt = 1
 
 [default_session]
-command = "phosh"
+command = "startplasmamobile"
 user = "root"
 EOF
 systemctl enable greetd
