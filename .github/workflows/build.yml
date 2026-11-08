@@ -70,13 +70,19 @@ jobs:
       - name: Configure
         run: |
           cd linux
-          make ARCH=arm64 CROSS_COMPILE=$CROSS defconfig
+          cp ../configs/hotdogb_defconfig arch/arm64/configs/hotdogb_defconfig
+          make ARCH=arm64 CROSS_COMPILE=$CROSS hotdogb_defconfig
           scripts/kconfig/merge_config.sh -m .config \
             ../configs/hotdogb-display-touch.config \
             ../configs/hotdogb-audio.config \
             ../configs/hotdogb-netboot.config
           make ARCH=arm64 CROSS_COMPILE=$CROSS olddefconfig
-          grep -E '^CONFIG_(DRM_PANEL_SAMSUNG_SOFEF03F|DRM_MSM|DRM_KMS_HELPER|INPUT_EVDEV|KEYBOARD_GPIO|SND_SOC_SM8150|SND_SOC_QDSP6|SND_SOC_WCD934X|MFD_WCD934X|SLIM_QCOM_NGD_CTRL|BLK_DEV_NBD)=' .config
+          grep -E '^CONFIG_(DRM_PANEL_SAMSUNG_SOFEF03F|DRM_MSM|DRM_KMS_HELPER|INPUT_EVDEV|KEYBOARD_GPIO|SND_SOC_SM8150|SND_SOC_QDSP6|SND_SOC_WCD934X|MFD_WCD934X|SLIM_QCOM_NGD_CTRL|BLK_DEV_NBD|USB_DWC3|USB_DWC3_QCOM|PHY_QCOM_QMP_USB|USB_CONFIGFS|USB_F_NCM|SCSI_UFS_QCOM)=' .config
+          # The initramfs ships no modules, so the netboot path has to be
+          # built in.  Fail the build instead of producing a dead image.
+          for s in BLK_DEV_NBD USB_DWC3 USB_DWC3_QCOM PHY_QCOM_QMP_USB USB_CONFIGFS USB_F_NCM USB_GADGET; do
+            grep -q "^CONFIG_$s=y$" .config || { echo "CONFIG_$s is not built in"; exit 1; }
+          done
 
       - name: Build the kernel, the DTB and the modules
         run: |
