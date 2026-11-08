@@ -41,7 +41,7 @@ set -e
 apt-get update
 apt-get install -y --no-install-recommends \
 	openssh-server systemd-sysv \
-	plasma-mobile maliit-keyboard greetd \
+	phosh squeekboard gnome-console greetd zram-tools \
 	mesa-utils libgl1-mesa-dri mesa-vulkan-drivers vulkan-tools \
 	libegl-mesa0 libgles2 libgbm1 \
 	wpasupplicant iw wireless-regdb \
@@ -98,17 +98,20 @@ ln -sf /dev/null /etc/systemd/system/systemd-networkd.service
 ln -sf /dev/null /etc/systemd/system/systemd-networkd.socket
 ln -sf /dev/null /etc/systemd/system/systemd-networkd-wait-online.service
 
-# Plasma Mobile on the panel, started by greetd on tty1.
+# Phosh on the panel, started by greetd on tty1.  Phosh is much lighter
+# than Plasma Mobile, which is unusable when the root filesystem lives on
+# NBD over USB 2.0.
 mkdir -p /etc/greetd
 cat > /etc/greetd/config.toml <<EOF
 [terminal]
 vt = 1
 
 [default_session]
-command = "startplasmamobile"
+command = "phosh-session"
 user = "root"
 EOF
 systemctl enable greetd
+systemctl enable zramswap 2>/dev/null || true
 systemctl set-default graphical.target
 
 rm -f /usr/bin/qemu-aarch64-static

@@ -26,16 +26,18 @@ vulkaninfo --summary 2>/dev/null | head -20
 
 ## 图形界面 / 屏幕键盘
 
-CI 的 rootfs 会装 **KDE Plasma Mobile**：
+CI 的 rootfs 会装 **Phosh**（比 Plasma Mobile 轻很多，NBD over USB 2.0
+的根文件系统下 Plasma 基本不可用）：
 
-- `plasma-mobile` + `maliit-keyboard`（屏幕键盘）；`startplasmamobile` 内部是
-  `startplasma-wayland --xwayland --inputmethod maliit-keyboard`；
-- `greetd` 在 `tty1` 起 `startplasmamobile`（`/etc/greetd/config.toml`）；
+- `phosh` + `squeekboard`（屏幕键盘）+ `gnome-console`；
+- `greetd` 在 `tty1` 起 `phosh-session`（`/etc/greetd/config.toml`）；
+  `phosh-session` 会自己起 dbus 会话，然后 exec `phoc`；
+- `zram-tools` 打开 zram swap，缓解 NBD 根文件系统的压力；
 - 默认目标改成 `graphical.target`；
-- 镜像默认大小提到 6 GiB（Plasma Mobile 依赖较多）。
+- 镜像默认 6 GiB。
 
-没有装完整 Plasma Desktop，只装 Plasma Mobile 需要的依赖。起不来时先看
-`journalctl -u greetd` 和 `cat /sys/class/drm/card0-DSI-1/status`。
+起不来时先看 `journalctl -u greetd`、`journalctl -u phoc` 和
+`cat /sys/class/drm/card0-DSI-1/status`。
 
 ## 已经装进 rootfs
 
