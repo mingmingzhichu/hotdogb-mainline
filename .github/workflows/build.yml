@@ -183,6 +183,8 @@ jobs:
           cp kernel-out/sm8150-oneplus-hotdogb.dtb out/
           cp kernel-out/config out/config
           BB=$(find busybox -type f -name busybox | head -1)
+          # download-artifact does not preserve the executable bit
+          chmod +x "$BB"
           sh tools/build_initramfs.sh "$BB" out/initramfs.cpio.gz
           python3 tools/patch_image_header.py --image out/Image --output out/Image.patched
           python3 tools/mkbootimg_v2.py \
