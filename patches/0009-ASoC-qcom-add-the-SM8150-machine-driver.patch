@@ -12,9 +12,9 @@ clock and the backend DAI links used by the OnePlus 7T.
 Signed-off-by: mingmingzhichu <lihaoyu0717@outlook.com>
 ---
  sound/soc/qcom/Kconfig  |  13 ++
- sound/soc/qcom/Makefile |   1 +
+ sound/soc/qcom/Makefile |   1 ++
  sound/soc/qcom/sm8150.c | 493 ++++++++++++++++++++++++++++++++++++++++
- 3 files changed, 507 insertions(+)
+ 3 files changed, 508 insertions(+)
  create mode 100644 sound/soc/qcom/sm8150.c
 
 diff --git a/sound/soc/qcom/Kconfig b/sound/soc/qcom/Kconfig
@@ -49,6 +49,7 @@ index 985ce2a..38fee6e 100644
  obj-$(CONFIG_SND_SOC_SC7280) += snd-soc-sc7280.o
  obj-$(CONFIG_SND_SOC_SC8280XP) += snd-soc-sc8280xp.o
  obj-$(CONFIG_SND_SOC_SDM845) += snd-soc-sdm845.o
++snd-soc-sm8150-y := sm8150.o
 +obj-$(CONFIG_SND_SOC_SM8150) += snd-soc-sm8150.o
  obj-$(CONFIG_SND_SOC_SM8250) += snd-soc-sm8250.o
  obj-$(CONFIG_SND_SOC_QCOM_COMMON) += snd-soc-qcom-common.o
