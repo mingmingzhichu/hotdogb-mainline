@@ -150,6 +150,7 @@ jobs:
       - name: Build the Debian arm64 rootfs
         run: |
           sudo update-binfmts --enable qemu-aarch64 || true
+          mkdir -p out
           sudo sh tools/build_debian_rootfs.sh /tmp/debroot out/netboot-debian.img 6G
           xz -T0 -6 out/netboot-debian.img
 

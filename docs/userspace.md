@@ -76,17 +76,43 @@ MPSS 的 `modem.mbn` 也在这个分区；`modem` 的 remoteproc 需要它和
 MPSS 会 assert，`ath10k` 永远等不到 `ATH10k WLAN firmware service`。
 
 ```sh
-rmtfs -o /tmp/rmtfs &
+# 1. EFS / PD 服务（rmtfs 用发行版 unit，自己起会缺 -P -s）
+systemctl start rmtfs
+# 2. SLPI 先起来，pd-mapper 才有东西可枚举
+echo start > /sys/class/remoteproc/remoteproc0/state    # slpi
+# 3. PD 表来自固件目录里的 *.jsn，没有它们 pd-mapper 直接退出
+mkdir -p /lib/firmware/qcom/sm8150/oneplus7
+cp /mnt/modem/image/*.jsn /lib/firmware/qcom/sm8150/oneplus7/
 pd-mapper &                 # 需要自己编
+# 4. 固件下载服务
+mkdir -p /var/lib/tqftpserv
 tqftpserv &
-echo start > /sys/class/remoteproc/remoteprocX/state   # modem
+# 5. 最后起 MPSS
+echo start > /sys/class/remoteproc/remoteprocX/state    # modem
+# 6. 加载模块
+insmod cfg80211.ko; insmod mac80211.ko; insmod ath.ko
+insmod ath10k_core.ko; insmod ath10k_snoc.ko
 ip link set wlan0 up
 wpa_supplicant -B -i wlan0 -c /etc/wpa_supplicant.conf
 dhcpcd wlan0                # 或 NetworkManager
 ```
 
+`pd-mapper` 只认固件目录里的 `*.jsn`（`adspr/adspua/cdspr/modemr/modemuw/slpir/slpius`），
+这些和 `wlanmdsp.mbn` 一起在 `modem_a/image/` 里。没有 `.jsn` 时启动即打印
+`no pd maps available` 并退出。
+
+`board-2.bin` 必须用本机的（高通不公开），直接把 `modem_a/image/bdwlan.bin`
+当 `board.bin` 放进 `ath10k/WCN3990/hw1.0/` 即可；ath10k 先找 `board-2.bin`，
+失败后回退到 `board.bin`，不会做长度校验。网上流传的通用 `board-2.bin`
+会报 `invalid length for board ie_id 0`。
+
 注意：**不要**用 `qcom,msa-fixed-perm`，会让整机掉 EDL。
 `wlanmdsp.mbn` 必须用本机 `modem_a` 里那份。
+
+模块必须和 Image 同一次构建。若 `insmod` 报 `Invalid parameters`，dmesg 里是
+`failed to validate module [x] BTF: -22`，可以用
+`aarch64-linux-gnu-objcopy --remove-section .BTF --remove-section .BTF.ext`
+去掉模块 BTF 后加载（跳过校验，vermagic 不变）。
 
 ## 传感器（SLPI / SSC）
 
