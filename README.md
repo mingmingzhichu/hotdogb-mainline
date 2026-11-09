@@ -26,23 +26,25 @@ boot/       32 字节空 DTBO（跑主线前必须刷，见"启动前"）
 
 | # | 补丁 | 内容 |
 |---|---|---|
+| 0000 | `arm64: dts: qcom: sm8150: add the OnePlus 7T (hotdogb)` | 板级 DTS、SoC dtsi 的 APR/q6afe/q6asm/q6adm、SLIMbus、sound、MDSS reset、pm8150b charger/fg |
 | 0001 | `dt-bindings: display: panel: add Samsung SOFEF03F` | 新增 YAML binding |
 | 0002 | `drm/panel: add driver for the Samsung SOFEF03F DSC panel` | 新驱动 + Kconfig/Makefile |
 | 0003 | `Input: rmi4 - honour the reset-gpios property` | 让 rmi4 真正去拉复位脚 |
-| 0004 | `arm64: dts: ...: display + touchscreen` | 板级 compatible、DPU/DSI/PHY/面板（去掉 simplefb）、i2c17 上的 S3706 |
+| 0004 | `arm64: dts: ...: display, touch, keys, battery` | 板级 compatible、DPU/DSI/PHY/面板（去掉 simplefb）、i2c17 上的 S3706、音量键、电量计 |
 | 0005 | `usb: dwc3: add snps,dma-mask-32bit for 32-bit interconnects` | 用 DT 属性描述 32 位互连，core 按属性设置 DMA mask |
 | 0006 | `dt-bindings: sound: add the NXP TFA9874 amplifier` | 新增 YAML binding |
 | 0007 | `ASoC: tfa9874: add the NXP TFA9874 speaker amplifier` | 新 codec 驱动 + Kconfig/Makefile |
 | 0008 | `arm64: dts: ...: enable audio and the speaker amplifiers` | WCD9340 on SLIMbus、两颗 TFA9874、QUATERNARY_MI2S_RX、声卡 DAI link |
+| 0009 | `ASoC: qcom: add the SM8150 machine driver` | SM8150 声卡驱动（SLIMbus 的 WCD9340 + QUATERNARY_MI2S 扬声器） |
 
-补丁基于 `Sr-0w/hotdog-linux-bringup` 的 7.0.0 树（`8e126dbc4`）。
+补丁基于上游稳定版 `linux-7.3.3`（kernel.org，`linux-7.3.3.tar.xz`）。
 
 **没有包含的东西**（故意的）：
 
 - 早期为了让机器启动起来打的一堆调试/权宜改动 —— `head.S`、clk、dwc3、`init/main.c`、`smp.c`、`timekeeping`、控制台花屏实验等。
-- 本地 DTS 里为了迁就 ABL 加的 `qcom,msm-id` / `qcom,board-id`。和显示/触屏无关，而且已经验证过纯主线 DTB 能被 ABL 接受，所以不放进这个系列。
+- 与显示/触屏/音频/netboot 无关的本地 bring-up 补丁。
 
-也就是说：**这些补丁是从干净的 HEAD 重新生成的**，不是把工作区整份 diff 打包。`git am` 打上去之后得到的树和本地工作区不是逐字节相同（少了上面那些），但显示/触屏部分一致。
+也就是说：**这些补丁是从干净的上游 HEAD 重新生成的**，不是把工作区整份 diff 打包。
 
 ## 应用
 

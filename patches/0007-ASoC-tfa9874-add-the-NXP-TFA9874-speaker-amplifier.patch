@@ -1,4 +1,4 @@
-From 4d73b932b91774d5245680cddcc12273e91dd12d Mon Sep 17 00:00:00 2001
+From 5b018c94c28ab6845680d87ae5a5530963ace63f Mon Sep 17 00:00:00 2001
 From: mingmingzhichu <lihaoyu0717@outlook.com>
 Date: Sat, 7 Nov 2026 14:00:09 +0800
 Subject: [PATCH] ASoC: tfa9874: add the NXP TFA9874 speaker amplifier
@@ -23,10 +23,10 @@ Signed-off-by: mingmingzhichu <lihaoyu0717@outlook.com>
  create mode 100644 sound/soc/codecs/tfa9874.c
 
 diff --git a/sound/soc/codecs/Kconfig b/sound/soc/codecs/Kconfig
-index fe6f707d6..e81710a71 100644
+index 8e251e1..5469373 100644
 --- a/sound/soc/codecs/Kconfig
 +++ b/sound/soc/codecs/Kconfig
-@@ -2238,6 +2238,16 @@ config SND_SOC_TFA9872
+@@ -2293,6 +2293,16 @@ config SND_SOC_TDA7419
  	depends on I2C
  	select REGMAP_I2C
  
@@ -44,28 +44,28 @@ index fe6f707d6..e81710a71 100644
  	tristate "NXP Semiconductors TFA9879 amplifier"
  	depends on I2C
 diff --git a/sound/soc/codecs/Makefile b/sound/soc/codecs/Makefile
-index e9b25011a..2bae1ad2d 100644
+index 3d122ac..cf5d79a 100644
 --- a/sound/soc/codecs/Makefile
 +++ b/sound/soc/codecs/Makefile
-@@ -326,6 +326,7 @@ snd-soc-tas2781-fmwlib-y := tas2781-fmwlib.o
+@@ -331,6 +331,7 @@ snd-soc-tas2781-comlib-i2c-y := tas2781-comlib-i2c.o
+ snd-soc-tas2781-fmwlib-y := tas2781-fmwlib.o
  snd-soc-tas2781-i2c-y := tas2781-i2c.o
  snd-soc-tas2783-sdw-y := tas2783-sdw.o
- snd-soc-tfa9872-y := tfa9872.o
 +snd-soc-tfa9874-y := tfa9874.o
  snd-soc-tfa9879-y := tfa9879.o
  snd-soc-tfa989x-y := tfa989x.o
  snd-soc-tlv320adc3xxx-y := tlv320adc3xxx.o
-@@ -763,6 +764,7 @@ obj-$(CONFIG_SND_SOC_TAS6424)	+= snd-soc-tas6424.o
+@@ -775,6 +776,7 @@ obj-$(CONFIG_SND_SOC_TAS6424)	+= snd-soc-tas6424.o
+ obj-$(CONFIG_SND_SOC_TAS675X)	+= snd-soc-tas675x.o
  obj-$(CONFIG_SND_SOC_TDA7419)	+= snd-soc-tda7419.o
  obj-$(CONFIG_SND_SOC_TAS2770) += snd-soc-tas2770.o
- obj-$(CONFIG_SND_SOC_TFA9872)	+= snd-soc-tfa9872.o
 +obj-$(CONFIG_SND_SOC_TFA9874)	+= snd-soc-tfa9874.o
  obj-$(CONFIG_SND_SOC_TFA9879)	+= snd-soc-tfa9879.o
  obj-$(CONFIG_SND_SOC_TFA989X)	+= snd-soc-tfa989x.o
  obj-$(CONFIG_SND_SOC_TLV320ADC3XXX)	+= snd-soc-tlv320adc3xxx.o
 diff --git a/sound/soc/codecs/tfa9874.c b/sound/soc/codecs/tfa9874.c
 new file mode 100644
-index 000000000..7dab4d93b
+index 0000000..84a41a1
 --- /dev/null
 +++ b/sound/soc/codecs/tfa9874.c
 @@ -0,0 +1,533 @@
@@ -602,3 +602,6 @@ index 000000000..7dab4d93b
 +MODULE_DESCRIPTION("NXP TFA9874 amplifier codec driver");
 +MODULE_AUTHOR("Robin Snyders <robin@snyders.xyz>");
 +MODULE_LICENSE("GPL");
+-- 
+2.47.3
+

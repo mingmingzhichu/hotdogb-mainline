@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       kernel_tarball:
-        description: Kernel source archive (GitLab/GitHub archive URL)
+        description: Kernel source archive (.tar.xz or .tar.gz URL)
         required: false
-        default: https://gitlab.postmarketos.org/soc/qualcomm-sm8150/linux/-/archive/8e126dbc4044ef2cec3ebe5754ddb05faa554af6/linux-8e126dbc4044ef2cec3ebe5754ddb05faa554af6.tar.gz
+        default: https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.3.tar.xz
 
 env:
-  KERNEL_TARBALL: ${{ inputs.kernel_tarball || 'https://gitlab.postmarketos.org/soc/qualcomm-sm8150/linux/-/archive/8e126dbc4044ef2cec3ebe5754ddb05faa554af6/linux-8e126dbc4044ef2cec3ebe5754ddb05faa554af6.tar.gz' }}
+  KERNEL_TARBALL: ${{ inputs.kernel_tarball || 'https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.3.tar.xz' }}
   CROSS: aarch64-linux-gnu-
   CMDS: "clk_ignore_unused loglevel=7 panic=0 printk.time=1 ramoops.max_reason=5 log_buf_len=4M"
   RELEASE_TAG: ci-latest
@@ -48,9 +48,9 @@ jobs:
 
       - name: Fetch the pinned kernel tree
         run: |
-          curl -fL --retry 3 --retry-delay 5 -o linux.tar.gz "$KERNEL_TARBALL"
-          tar xzf linux.tar.gz
-          dir=$(tar tzf linux.tar.gz | head -1 | cut -d/ -f1)
+          curl -fL --retry 3 --retry-delay 5 -o linux.tar.xz "$KERNEL_TARBALL"
+          tar xf linux.tar.xz
+          dir=$(tar tf linux.tar.xz | head -1 | cut -d/ -f1)
           mv "$dir" linux
           head -5 linux/Makefile
 
@@ -258,9 +258,9 @@ jobs:
 
       - name: Fetch the pinned kernel tree
         run: |
-          curl -fL --retry 3 -o linux.tar.gz "$KERNEL_TARBALL"
-          tar xzf linux.tar.gz
-          dir=$(tar tzf linux.tar.gz | head -1 | cut -d/ -f1)
+          curl -fL --retry 3 -o linux.tar.xz "$KERNEL_TARBALL"
+          tar xf linux.tar.xz
+          dir=$(tar tf linux.tar.xz | head -1 | cut -d/ -f1)
           mv "$dir" linux
 
       - name: Run checkpatch

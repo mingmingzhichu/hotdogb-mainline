@@ -1,32 +1,32 @@
-From 6c206f4c260ea87b29a08c13666fd57cb3dcddb8 Mon Sep 17 00:00:00 2001
+From d0f299d025aa57e4be992b0a7969da7ad3e7e478 Mon Sep 17 00:00:00 2001
 From: mingmingzhichu <lihaoyu0717@outlook.com>
 Date: Sat, 31 Oct 2026 16:36:53 +0800
 Subject: [PATCH] arm64: dts: qcom: sm8150-oneplus-hotdogb: display, touch,
  keys, battery
 
-Enable the display path (DPU, DSI0, 7nm PHY and the Samsung SOFEF03F panel),
-the Synaptics S3706 touchscreen on QUPv3 SE17, the PM8150 volume keys and the
-PM8150B fuel gauge.
+Enable the display path (DPU, DSI0, 7nm PHY and the Samsung SOFEF03F
+panel), the Synaptics S3706 touchscreen on QUPv3 SE17, the PM8150 volume
+keys and the PM8150B fuel gauge.
 
-The GPU node stays disabled: msm_dpu binds it as a component, the node has no
-working clock/power-domain wiring and there is no zap shader on the device, so
-enabling it takes the display down with it.
+The GPU node stays disabled: msm_dpu binds it as a component, the node
+has no working clock/power-domain wiring and there is no zap shader on
+the device, so enabling it takes the display down with it.
 
-The SMB5 charger driver is left disabled as well: reading POWER_PATH_STATUS
-wedges the SPMI bus on this board.  Charging keeps running with the hardware
-defaults and the fuel gauge still reports capacity, voltage, current and
-temperature.
+The SMB5 charger driver is left disabled as well: reading
+POWER_PATH_STATUS wedges the SPMI bus on this board.  Charging keeps
+running with the hardware defaults and the fuel gauge still reports
+capacity, voltage, current and temperature.
 
 Signed-off-by: mingmingzhichu <lihaoyu0717@outlook.com>
 ---
- .../boot/dts/qcom/sm8150-oneplus-hotdogb.dts  | 342 ++++++++++++++++--
- 1 file changed, 311 insertions(+), 31 deletions(-)
+ .../boot/dts/qcom/sm8150-oneplus-hotdogb.dts  | 390 ++++++++++++++++--
+ 1 file changed, 366 insertions(+), 24 deletions(-)
 
 diff --git a/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts b/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
-index 7ba966a83..45bc12d8d 100644
+index 3d3cf66..7e0c501 100755
 --- a/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
-@@ -7,53 +7,39 @@
+@@ -7,44 +7,29 @@
  
  #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
  #include <dt-bindings/gpio/gpio.h>
@@ -47,62 +47,43 @@ index 7ba966a83..45bc12d8d 100644
  
  	chosen {
  		#address-cells = <2>;
--        #size-cells = <2>;
--        ranges;
+ 		#size-cells = <2>;
+ 		ranges;
 -		stdout-path = "display0";
 -
 -		/*
--         * hack: Use framebuffer setup by the bootloader for simplefb.
--         * the address is taken from the bootloader config (strings xbl.img | grep "Display Reserved")
--         */
--        framebuffer0: framebuffer@9C000000 {
--            compatible = "simple-framebuffer";
--            reg = <0 0x9C000000 0 (1080 * 2400 * 4)>;
--            width = <1080>;
--            height = <2400>;
--            stride = <(1080 * 4)>;
--            format = "a8r8g8b8";
--            status = "okay";
--
--        };
-+		#size-cells = <2>;
-+		ranges;
+-		 * hack: Use framebuffer setup by the bootloader for simplefb.
+-		 * The address is taken from the bootloader config (strings
+-		 * xbl.img | grep "Display Reserved").
+-		 */
+-		framebuffer0: framebuffer@9C000000 {
+-			compatible = "simple-framebuffer";
+-			reg = <0 0x9C000000 0 (1080 * 2400 * 4)>;
+-			width = <1080>;
+-			height = <2400>;
+-			stride = <(1080 * 4)>;
+-			format = "a8r8g8b8";
+-			status = "okay";
+-		};
 +
  	};
  
  	reserved-memory {
--	// hack: Bootloader framebuffer memory region
--        fb_mem: memory@a1a10000 {
--            compatible = "removed-dma-pool";
--            no-map;
--            reg = <0 0x9C000000 0 (1080 * 2400 * 4)>;
--        };
+-		/* hack: Bootloader framebuffer memory region */
+-		fb_mem: memory@a1a10000 {
 +		/* Bootloader framebuffer memory region */
 +		fb_mem: memory@9c000000 {
-+			compatible = "removed-dma-pool";
+ 			compatible = "removed-dma-pool";
+-			no-map;
+-			reg = <0 0x9C000000 0 (1080 * 2400 * 4)>;
 +			reg = <0 0x9c000000 0 (1080 * 2400 * 4)>;
-+		};
+ 		};
  
  		removed_region: removed-region@89d00000 {
- 			reg = <0x0 0x89d00000 0x0 0x1a00000>;
- 			no-map;
- 		};
--		ramoops: ramoops@0xA9800000 {
-+
-+		ramoops: ramoops@a9800000 {
- 			compatible = "ramoops";
--			reg = <0 0xA9800000 0 0x400000>;
-+			reg = <0 0xa9800000 0 0x400000>;
- 			record-size = <0x40000>;
- 			console-size = <0x40000>;
- 			ftrace-size = <0x40000>;
-@@ -62,4 +48,298 @@ ramoops: ramoops@0xA9800000 {
- 			ecc-size = <0x0>;
+@@ -64,3 +49,360 @@
  		};
  	};
--};
-\ No newline at end of file
-+};
+ };
 +
 +/*
 + * Display: DPU 5.0 + DSI0 + 7nm PHY + Samsung SOFEF03F M FHD panel.
@@ -120,13 +101,14 @@ index 7ba966a83..45bc12d8d 100644
 +	status = "okay";
 +
 +	/*
-+	 * A/B test: TE muxing disabled.  Mainline DPU defaults to
-+	 * DPU_VSYNC_SOURCE_GPIO_0 ("mdp_vsync_p") in command mode, so if the
-+	 * panel never emits TE the kickoff never happens.  Re-enable once the
-+	 * TE path is proven.
++	 * TE: gpio8 is muxed to mdp_vsync and fed to the DPU as its vsync
++	 * source, matching the vendor panel node (qcom,mdss-dsi-te-using-te-pin
++	 * + qcom,mdss-dsi-te-pin-select = 1).  If a future change makes the
++	 * panel stop producing TE, drop qcom,te-source from &mdss_dsi0_out and
++	 * comment these two lines again to fall back to the timer driven path.
 +	 */
-+	/* pinctrl-names = "default"; */
-+	/* pinctrl-0 = <&panel_te_pin>; */
++	pinctrl-names = "default";
++	pinctrl-0 = <&panel_te_pin>;
 +
 +	panel@0 {
 +		compatible = "samsung,sofef03f";
@@ -151,6 +133,7 @@ index 7ba966a83..45bc12d8d 100644
 +&mdss_dsi0_out {
 +	data-lanes = <0 1 2 3>;
 +	remote-endpoint = <&panel_in>;
++	qcom,te-source = "mdp_vsync_p";
 +};
 +
 +&mdss_dsi0_phy {
@@ -352,28 +335,89 @@ index 7ba966a83..45bc12d8d 100644
 +};
 +
 +/*
-+ * Modem / ADSP / Wi-Fi are parked.
-+ *
-+ * The radio chain was taken all the way to "MPSS running" on this handset:
-+ *   - RMTFS moved to low memory 0x89b00000 (the OnePlus-common 0xf2901000 and
-+ *     the 0xfc201000 variant both fail SCM assignment here),
-+ *   - mpss_mem widened to 160 MiB at 0x8dc00000 (the stock modem image spans
-+ *     0x8dc00000..0x97c00000) with venus/slpi/ipa/gpu/spss/cdsp pushed up,
-+ *   - the single-file OOS10 modem.mbn staged from the vendor firmware repo.
-+ * MPSS boots that image, but ath10k still never sees the WLFW QMI service and
-+ * the modem faults ("fatal error without message") the moment the driver talks
-+ * to it.  Marking the WCN3990 rails regulator-always-on does not help and makes
-+ * the board fail to boot, so nothing radio-related is enabled here.
++ * Wi-Fi / modem, following the hotdog bring-up:
++ *   - RMTFS at 0xfc201000 (0023: the generic 0x89b00000 and the OnePlus-common
++ *     0xf2901000 are both rejected by this handset's secure monitor),
++ *   - mpss_mem 160 MiB at 0x8dc00000 (the stock modem image spans that), with
++ *     venus/slpi/ipa/gpu/spss/cdsp pushed up behind it,
++ *   - WCN3990 rails as the vendor describes (ch1 is vreg_l10c_3p3),
++ *   - MPSS running the single-file OOS10 modem.mbn, which is what provides the
++ *     WLFW QMI service ath10k waits for.
++ * The firmware is staged at runtime (76 MB is too large for the initramfs), so
++ * the remoteproc is enabled here but started from userspace.
 + */
++&rmtfs_mem {
++	reg = <0x0 0xfc201000 0x0 0x200000>;
++};
++
++&mpss_mem {
++	reg = <0x0 0x8dc00000 0x0 0xa000000>;
++};
++
++&venus_mem {
++	reg = <0x0 0x97c00000 0x0 0x500000>;
++};
++
++&slpi_mem {
++	reg = <0x0 0x98100000 0x0 0x1400000>;
++};
++
++&ipa_fw_mem {
++	reg = <0x0 0x99500000 0x0 0x10000>;
++};
++
++&ipa_gsi_mem {
++	reg = <0x0 0x99510000 0x0 0x5000>;
++};
++
++&gpu_mem {
++	reg = <0x0 0x99515000 0x0 0x2000>;
++};
++
++&spss_mem {
++	reg = <0x0 0x99600000 0x0 0x100000>;
++};
++
++&cdsp_mem {
++	reg = <0x0 0x99700000 0x0 0x1400000>;
++};
++
++&remoteproc_mpss {
++	status = "okay";
++	firmware-name = "qcom/sm8150/oneplus7/modem.mbn";
++};
++
++&remoteproc_adsp {
++	status = "okay";
++	firmware-name = "qcom/sm8150/adsp.mdt";
++};
++
++/*
++ * The sensor core (SSC) runs on the SLPI, not on the AP: accelerometer, gyro,
++ * ambient light and proximity are all behind it.  The firmware is copied out of
++ * modem_a at boot (slpi.mdt + slpi.bNN, ~6 MB) because it is too large for the
++ * initramfs; pd-mapper has to serve the slpi protection domain before it starts.
++ */
++&remoteproc_slpi {
++	status = "okay";
++	firmware-name = "qcom/sm8150/oneplus7/slpi.mdt";
++};
 +
 +/*
 + * Wi-Fi: WCN3990 over SNOC.  Rails are wired and the driver is built in, but the
 + * interface cannot come up until the modem side is sorted out (see above).
 + */
 +&wifi {
-+	vdd-0.8-cx-mx-supply = <&vdda_wcss_pll>;
++	/*
++	 * TrustZone does not let the non-secure world remap the WCN3990 MSA
++	 * window (the map request comes back -EINVAL), but it is already mapped
++	 * for the modem, so tell the driver to leave the permissions alone.
++	 * Without this ath10k cannot get past QMI and no WMI vdev is created.
++	 */
++	qcom,msa-fixed-perm;
++	vdd-0.8-cx-mx-supply = <&vreg_l1a_0p75>;
 +	vdd-1.8-xo-supply = <&vreg_l7a_1p8>;
-+	vdd-1.3-rfa-supply = <&vdda_wcss_adcdac_1>;
++	vdd-1.3-rfa-supply = <&vreg_l2c_1p3>;
 +	vdd-3.3-ch0-supply = <&vreg_l11c_3p3>;
 +	vdd-3.3-ch1-supply = <&vreg_l10c_3p3>;
 +};
