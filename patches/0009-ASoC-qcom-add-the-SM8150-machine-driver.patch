@@ -45,7 +45,7 @@ diff --git a/sound/soc/qcom/Makefile b/sound/soc/qcom/Makefile
 index 985ce2a..38fee6e 100644
 --- a/sound/soc/qcom/Makefile
 +++ b/sound/soc/qcom/Makefile
-@@ -39,6 +39,9 @@ obj-$(CONFIG_SND_SOC_SC7180) += snd-soc-sc7180.o
+@@ -39,6 +39,8 @@ obj-$(CONFIG_SND_SOC_SC7180) += snd-soc-sc7180.o
  obj-$(CONFIG_SND_SOC_SC7280) += snd-soc-sc7280.o
  obj-$(CONFIG_SND_SOC_SC8280XP) += snd-soc-sc8280xp.o
  obj-$(CONFIG_SND_SOC_SDM845) += snd-soc-sdm845.o
