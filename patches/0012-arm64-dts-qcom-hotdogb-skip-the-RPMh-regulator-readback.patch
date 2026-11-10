@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: mingmingzhichu <lihaoyu0717@outlook.com>
+Date: Tue, 10 Nov 2026 20:02:00 +0800
+Subject: [PATCH] arm64: dts: qcom: hotdogb: skip the RPMh regulator readback
+
+The bootloader on this device leaves the RPMh read channel unavailable to
+Linux.  The regulator driver issues a read for every rail while it probes,
+each read times out after ten seconds, and the abandoned request keeps the
+TCS busy.  Every later RPMh transaction then fails as well, including the
+BCM votes taken by the interconnect provider, and the boot stalls long
+before the USB gadget shows up:
+
+  qcom-rpmh-regulator 18200000.rsc:pm8150l-rpmh-regulators:
+      failed to read voltage ret = -110
+  qcom_icc_bcm_voter_commit -> icc_set_bw -> dwc3_qcom_probe
+  Err: sending MMC RPMH requests (-110)
+
+Set qcom,no-readback on the three PMIC regulator containers so the driver
+uses the cached state instead of reading it back.
+
+Signed-off-by: mingmingzhichu <lihaoyu0717@outlook.com>
+---
+ arch/arm64/boot/dts/qcom/sm8150-oneplus-common.dtsi | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-oneplus-common.dtsi b/arch/arm64/boot/dts/qcom/sm8150-oneplus-common.dtsi
+--- a/arch/arm64/boot/dts/qcom/sm8150-oneplus-common.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8150-oneplus-common.dtsi
+@@ -122,6 +122,7 @@
+ 	pm8150-rpmh-regulators {
+ 		compatible = "qcom,pm8150-rpmh-regulators";
+ 		qcom,pmic-id = "a";
++		qcom,no-readback;
+ 
+ 		vdd-s1-supply = <&vph_pwr>;
+ 		vdd-s2-supply = <&vph_pwr>;
+@@ -277,6 +278,7 @@
+ 	pm8150l-rpmh-regulators {
+ 		compatible = "qcom,pm8150l-rpmh-regulators";
+ 		qcom,pmic-id = "c";
++		qcom,no-readback;
+ 
+ 		vdd-s1-supply = <&vph_pwr>;
+ 		vdd-s2-supply = <&vph_pwr>;
+@@ -390,6 +392,7 @@
+ 	pm8009-rpmh-regulators {
+ 		compatible = "qcom,pm8009-rpmh-regulators";
+ 		qcom,pmic-id = "f";
++		qcom,no-readback;
+ 
+ 		vdd-s1-supply = <&vph_pwr>;
+ 		vdd-s2-supply = <&vreg_bob>;
+-- 
+2.47.3

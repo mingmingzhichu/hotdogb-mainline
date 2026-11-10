@@ -12,7 +12,7 @@
 ## 目录
 
 ```
-patches/    5 个补丁，按顺序 git am 即可
+patches/    按顺序编号的补丁，`git am` 即可
 configs/    内核配置片段（merge_config.sh 用）
 docs/       实现说明、参数来源、排查方法
 reference/  从原厂 dtbo 提取的面板节点原文（数据来源，仅供对照）
@@ -36,6 +36,9 @@ boot/       32 字节空 DTBO（跑主线前必须刷，见"启动前"）
 | 0007 | `ASoC: tfa9874: add the NXP TFA9874 speaker amplifier` | 新 codec 驱动 + Kconfig/Makefile |
 | 0008 | `arm64: dts: ...: enable audio and the speaker amplifiers` | WCD9340 on SLIMbus、两颗 TFA9874、QUATERNARY_MI2S_RX、声卡 DAI link |
 | 0009 | `ASoC: qcom: add the SM8150 machine driver` | SM8150 声卡驱动（SLIMbus 的 WCD9340 + QUATERNARY_MI2S 扬声器） |
+| 0010 | `dt-bindings: regulator: qcom,rpmh: document qcom,no-readback` | 新增 YAML 属性说明 |
+| 0011 | `regulator: rpmh: allow platforms to skip voltage/state readback` | 固件不交 read 通道时用缓存值，避免 TCS 被占死 |
+| 0012 | `arm64: dts: qcom: hotdogb: skip the RPMh regulator readback` | 在 pm8150/pm8150l/pm8009 上打开 `qcom,no-readback` |
 
 补丁基于上游稳定版 `linux-7.3.3`（kernel.org，`linux-7.3.3.tar.xz`）。
 

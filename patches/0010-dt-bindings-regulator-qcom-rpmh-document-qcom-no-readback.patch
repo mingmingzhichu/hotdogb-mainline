@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: mingmingzhichu <lihaoyu0717@outlook.com>
+Date: Tue, 10 Nov 2026 20:00:00 +0800
+Subject: [PATCH] dt-bindings: regulator: qcom,rpmh: document
+ qcom,no-readback
+
+Some firmware configurations do not hand the RPMh read channel to the OS.
+A read request then times out, and because a timed-out request keeps its
+TCS busy, every subsequent RPMh transaction fails as well.
+
+Document an opt-in property which tells the driver to report the cached
+state instead of issuing read requests.
+
+Signed-off-by: mingmingzhichu <lihaoyu0717@outlook.com>
+---
+ .../bindings/regulator/qcom,rpmh-regulator.yaml     | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/regulator/qcom,rpmh-regulator.yaml b/Documentation/devicetree/bindings/regulator/qcom,rpmh-regulator.yaml
+--- a/Documentation/devicetree/bindings/regulator/qcom,rpmh-regulator.yaml
++++ b/Documentation/devicetree/bindings/regulator/qcom,rpmh-regulator.yaml
+@@ -124,6 +124,19 @@ properties:
+         strictly lower power state.
+     $ref: /schemas/types.yaml#/definitions/flag
+ 
++  qcom,no-readback:
++    description: |
++        Boolean flag which indicates that the application processor cannot
++        read back the state of these regulators from RPMh.
++
++        Some firmware configurations do not hand over the RPMh read channel
++        to the OS.  A read request then times out, and because a timed-out
++        request keeps its TCS busy, every subsequent RPMh transaction
++        (including BCM votes) fails as well.  On such platforms the driver
++        must report the cached voltage and enable state instead of issuing
++        read requests.
++    $ref: /schemas/types.yaml#/definitions/flag
++
+   vdd-flash-supply:
+     description: Input supply phandle of flash.
+ 
+-- 
+2.47.3
