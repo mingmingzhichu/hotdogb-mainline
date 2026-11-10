@@ -213,9 +213,14 @@ jobs:
   release:
     name: publish the release
     runs-on: ubuntu-24.04
-    needs: [clean, busybox-pack, rootfs]
+    needs: [clean, kernel, busybox-pack, rootfs]
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-out
+          path: kernel-out
 
       - uses: actions/download-artifact@v4
         with:
@@ -235,7 +240,7 @@ jobs:
             --title "hotdogb CI build" \
             --notes "Built from ${{ github.sha }}" \
             --prerelease
-          for f in boot-out/* rootfs-out/*; do
+          for f in boot-out/* rootfs-out/* kernel-out/modules.tar.gz; do
             [ -f "$f" ] || continue
             if [ "$(stat -c%s "$f")" -gt 2000000000 ]; then
               echo "skipping $f (over the 2 GiB asset limit)"
