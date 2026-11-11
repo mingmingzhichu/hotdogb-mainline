@@ -164,8 +164,9 @@ jobs:
           sudo mkdir -p /mnt/hotdogb-root
           sudo mount -o loop out/netboot-debian.img /mnt/hotdogb-root
           sudo mkdir -p /mnt/hotdogb-root/lib/modules
-          sudo tar xzf kernel-out/modules.tar.gz -C /mnt/hotdogb-root/lib/modules --strip-components=2
+          sudo tar xzf kernel-out/modules.tar.gz -C /mnt/hotdogb-root/lib/modules --strip-components=3
           sudo depmod -b /mnt/hotdogb-root "$(ls /mnt/hotdogb-root/lib/modules)"
+          sudo test -f "/mnt/hotdogb-root/lib/modules/$(ls /mnt/hotdogb-root/lib/modules)/modules.dep"
           sudo umount /mnt/hotdogb-root
           xz -T0 -6 out/netboot-debian.img
 
