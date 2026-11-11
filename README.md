@@ -39,6 +39,7 @@ boot/       32 字节空 DTBO（跑主线前必须刷，见"启动前"）
 | 0010 | `dt-bindings: regulator: qcom,rpmh: document qcom,no-readback` | 新增 YAML 属性说明 |
 | 0011 | `regulator: rpmh: allow platforms to skip voltage/state readback` | 固件不交 read 通道时用缓存值，避免 TCS 被占死 |
 | 0012 | `arm64: dts: qcom: hotdogb: skip the RPMh regulator readback` | 在 pm8150/pm8150l/pm8009 上打开 `qcom,no-readback` |
+| 0013 | `arm64: dts: qcom: sm8150: add the 2.9568 GHz prime CPU OPP` | 855+ 的 prime core 多一档，DT 缺这档会被 cpufreq 丢掉 |
 
 补丁基于上游稳定版 `linux-7.3.3`（kernel.org，`linux-7.3.3.tar.xz`）。
 

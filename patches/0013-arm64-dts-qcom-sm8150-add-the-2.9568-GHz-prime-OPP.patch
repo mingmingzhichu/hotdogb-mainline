@@ -1,0 +1,37 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: mingmingzhichu <lihaoyu0717@outlook.com>
+Date: Wed, 11 Nov 2026 22:40:00 +0800
+Subject: [PATCH] arm64: dts: qcom: sm8150: add the 2.9568 GHz prime CPU OPP
+
+The SM8150-AB variant used on the OnePlus 7T advertises one more prime
+core level in its hardware frequency LUT than the table in sm8150.dtsi
+describes.  qcom-cpufreq-hw does not add operating points, it only
+adjusts the voltage of an existing one, so the extra level is dropped:
+
+  cpu cpu7: Voltage update failed freq=2956800
+  cpu cpu7: failed to update OPP for freq=2956800
+
+and the prime core stays at 2.8416 GHz.  Add the missing operating point;
+the voltage is still programmed from the hardware LUT at runtime, so the
+entry only needs the frequency and the interconnect bandwidth.
+
+Signed-off-by: mingmingzhichu <lihaoyu0717@outlook.com>
+---
+ arch/arm64/boot/dts/qcom/sm8150.dtsi | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8150.dtsi b/arch/arm64/boot/dts/qcom/sm8150.dtsi
+--- a/arch/arm64/boot/dts/qcom/sm8150.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8150.dtsi
+@@ -606,6 +606,11 @@
+ 			opp-hz = /bits/ 64 <2841600000>;
+ 			opp-peak-kBps = <8368000 51609600>;
+ 		};
++
++		cpu7_opp21: opp-2956800000 {
++			opp-hz = /bits/ 64 <2956800000>;
++			opp-peak-kBps = <8368000 51609600>;
++		};
+ 	};
+ 
+ 	firmware {
