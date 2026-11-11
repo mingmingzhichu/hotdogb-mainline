@@ -42,11 +42,13 @@ apt-get update
 apt-get install -y --no-install-recommends \
 	openssh-server systemd-sysv \
 	phosh squeekboard gnome-console greetd zram-tools \
+	gnome-session-bin gnome-settings-daemon \
 	mesa-utils libgl1-mesa-dri mesa-vulkan-drivers vulkan-tools \
 	libegl-mesa0 libgles2 libgbm1 \
 	wpasupplicant iw wireless-regdb \
 	alsa-ucm-conf alsa-utils \
 	iio-sensor-proxy \
+	ca-certificates \
 	rmtfs tqftpserv
 apt-get clean
 '
@@ -113,6 +115,26 @@ EOF
 systemctl enable greetd
 systemctl enable zramswap 2>/dev/null || true
 systemctl set-default graphical.target
+
+# The image is built against the upstream mirror (debootstrap is fastest
+# there on the CI runner), but it ships pointing at the Tsinghua mirror:
+# the phone reaches the network through the USB link and often has to
+# install packages on a slow, high-latency connection.
+mkdir -p /etc/apt/sources.list.d
+cat > /etc/apt/sources.list.d/debian.sources <<EOF
+Types: deb
+URIs: https://mirrors.tuna.tsinghua.edu.cn/debian
+Suites: trixie trixie-updates
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+
+Types: deb
+URIs: https://mirrors.tuna.tsinghua.edu.cn/debian-security
+Suites: trixie-security
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+EOF
+rm -f /etc/apt/sources.list
 
 rm -f /usr/bin/qemu-aarch64-static
 rm -rf /var/lib/apt/lists/*

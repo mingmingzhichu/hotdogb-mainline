@@ -137,9 +137,15 @@ jobs:
   rootfs:
     name: Debian netboot rootfs
     runs-on: ubuntu-24.04
+    needs: [kernel]
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-out
+          path: kernel-out
 
       - name: Install the rootfs tools
         run: |
@@ -152,6 +158,15 @@ jobs:
           sudo update-binfmts --enable qemu-aarch64 || true
           mkdir -p out
           sudo sh tools/build_debian_rootfs.sh /tmp/debroot out/netboot-debian.img 6G
+          # The netboot image has to carry the kernel modules: the panel,
+          # touchscreen, amplifier and sound card drivers are all modules,
+          # so without them the rootfs boots to a black screen.
+          sudo mkdir -p /mnt/hotdogb-root
+          sudo mount -o loop out/netboot-debian.img /mnt/hotdogb-root
+          sudo mkdir -p /mnt/hotdogb-root/lib/modules
+          sudo tar xzf kernel-out/modules.tar.gz -C /mnt/hotdogb-root/lib/modules --strip-components=2
+          sudo depmod -b /mnt/hotdogb-root "$(ls /mnt/hotdogb-root/lib/modules)"
+          sudo umount /mnt/hotdogb-root
           xz -T0 -6 out/netboot-debian.img
 
       - uses: actions/upload-artifact@v4
