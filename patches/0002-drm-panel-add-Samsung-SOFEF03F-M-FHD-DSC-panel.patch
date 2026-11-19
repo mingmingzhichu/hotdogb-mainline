@@ -1,27 +1,30 @@
-From 8ba8dca588b7422b2624484b60dce008251d7c93 Mon Sep 17 00:00:00 2001
+From c0840f65a9b21006f055734b9254cabfa3d0d04b Mon Sep 17 00:00:00 2001
 From: mingmingzhichu <lihaoyu0717@outlook.com>
-Date: Sat, 31 Oct 2026 16:36:43 +0800
+Date: Thu, 19 Nov 2026 23:22:29 +0800
 Subject: [PATCH] drm/panel: add Samsung SOFEF03F M FHD DSC panel
 
-Add a driver for the 1080x2400 command mode AMOLED panel used on the OnePlus
-7T.  The init sequence, PPS payload and DSC parameters are taken verbatim from
-the vendor device tree node.
+Add a driver for the 1080x2400 command mode AMOLED panel used on the
+OnePlus 7T.  The init sequence, PPS payload and DSC parameters are taken
+verbatim from the vendor device tree node.
 
-The backlight is driven through DCS 0x51.  Its curve is very steep (1024, half
-of the 2047 maximum, is barely visible), so the default is full scale, and the
-value is pushed from ->enable() because the backlight core only calls
-->update_status() when userspace changes it.
+The backlight is driven through DCS 0x51 with the big-endian ("Samsung")
+byte order, i.e. the vendor's qcom,mdss-bl-high2bit.  In normal mode the
+register is 10 bits wide (0..1023).  The vendor driver encodes HBM as
+"level + 1023", so writing 1024..2046 without switching the panel to the
+high-brightness gamma first wraps around and makes the screen go dark;
+clamp to 1023 and start at half scale.  Levels 1..5 flicker, so clamp
+them up to 6 while leaving 0 alone for userspace.
 
-The first DSI command burst after power-on occasionally times out, leaving the
-panel uninitialised behind a lit but black screen; retry the init sequence with
-a power cycle up to three times.
+The first DSI command burst after power-on occasionally times out,
+leaving the panel uninitialised behind a lit but black screen; retry the
+init sequence with a power cycle up to three times.
 
 Signed-off-by: mingmingzhichu <lihaoyu0717@outlook.com>
 ---
  drivers/gpu/drm/panel/Kconfig                 |  12 +
  drivers/gpu/drm/panel/Makefile                |   1 +
- .../gpu/drm/panel/panel-samsung-sofef03f.c    | 479 ++++++++++++++++++
- 3 files changed, 492 insertions(+)
+ .../gpu/drm/panel/panel-samsung-sofef03f.c    | 497 ++++++++++++++++++
+ 3 files changed, 510 insertions(+)
  create mode 100644 drivers/gpu/drm/panel/panel-samsung-sofef03f.c
 
 diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
@@ -61,10 +64,10 @@ index e96f089f7..ee6eeeca5 100644
  obj-$(CONFIG_DRM_PANEL_SHARP_LQ101R1SX01) += panel-sharp-lq101r1sx01.o
 diff --git a/drivers/gpu/drm/panel/panel-samsung-sofef03f.c b/drivers/gpu/drm/panel/panel-samsung-sofef03f.c
 new file mode 100644
-index 000000000..e3b77a705
+index 0000000..dca5a81
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-samsung-sofef03f.c
-@@ -0,0 +1,479 @@
+@@ -0,0 +1,497 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Samsung SOFEF03F M FHD panel driver
@@ -90,9 +93,16 @@ index 000000000..e3b77a705
 +#include <drm/drm_panel.h>
 +#include <drm/drm_probe_helper.h>
 +
-+/* 0x51 value used until userspace sets one.  The panel's brightness curve is
-+ * very steep: 1024 (half of max) is barely visible, so start at full scale. */
-+#define SOFEF03F_DEFAULT_BRIGHTNESS	2047
++/*
++ * 0x51 is a 10-bit register: 0..1023 in normal mode.  Values from 1024 to
++ * 2046 are the vendor's HBM encoding ("level + 1023") and are only valid
++ * after the panel has been switched to its high-brightness gamma with
++ * 0x53 0xe0.  Writing them in normal mode wraps the brightness around, so
++ * keep the range at 1023 and leave HBM to a future change.
++ */
++#define SOFEF03F_MAX_BRIGHTNESS		1023
++#define SOFEF03F_MIN_BRIGHTNESS		6
++#define SOFEF03F_DEFAULT_BRIGHTNESS	512
 +
 +struct sofef03f {
 +	struct drm_panel panel;
@@ -281,6 +291,17 @@ index 000000000..e3b77a705
 +{
 +	int ret;
 +
++	/*
++	 * The vendor driver exposes 0..1023 and writes it with the big-endian
++	 * Samsung variant of 0x51, which is what ..._large() already does.
++	 * Levels below 6 flicker, so clamp them up; 0 stays 0 so userspace can
++	 * still blank the panel.
++	 */
++	if (brightness > SOFEF03F_MAX_BRIGHTNESS)
++		brightness = SOFEF03F_MAX_BRIGHTNESS;
++	else if (brightness && brightness < SOFEF03F_MIN_BRIGHTNESS)
++		brightness = SOFEF03F_MIN_BRIGHTNESS;
++
 +	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
 +	ret = mipi_dsi_dcs_set_display_brightness_large(dsi, brightness);
 +	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
@@ -381,7 +402,7 @@ index 000000000..e3b77a705
 +	const struct backlight_properties props = {
 +		.type = BACKLIGHT_RAW,
 +		.brightness = SOFEF03F_DEFAULT_BRIGHTNESS,
-+		.max_brightness = 2047,
++		.max_brightness = SOFEF03F_MAX_BRIGHTNESS,
 +	};
 +
 +	return devm_backlight_device_register(dev, dev_name(dev), dev, dsi,
