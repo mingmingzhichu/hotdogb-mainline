@@ -12,6 +12,13 @@ IMG=${2:-out/netboot-debian.img}
 SIZE=${3:-6G}
 SUITE=${SUITE:-trixie}
 MIRROR=${MIRROR:-http://deb.debian.org/debian}
+# Locale of the graphical session.  Override with ROOTFS_LANG=C.UTF-8 for
+# an English desktop.
+ROOTFS_LANG=${ROOTFS_LANG:-zh_CN.UTF-8}
+case "$ROOTFS_LANG" in
+*.*) ;;
+*) echo "ROOTFS_LANG must look like zh_CN.UTF-8" >&2; exit 1 ;;
+esac
 export DEBIAN_FRONTEND=noninteractive
 
 rm -rf "$ROOT"
@@ -36,18 +43,22 @@ cleanup() {
 trap cleanup EXIT
 
 cp /etc/resolv.conf "$ROOT/etc/resolv.conf"
-chroot "$ROOT" /bin/bash -c '
+ROOTFS_LANG="$ROOTFS_LANG" chroot "$ROOT" /bin/bash -c '
 set -e
 apt-get update
 apt-get install -y --no-install-recommends \
 	openssh-server systemd-sysv \
 	phosh squeekboard gnome-console greetd zram-tools \
+	phosh-mobile-settings phosh-plugins phosh-mobile-tweaks \
 	gnome-session-bin gnome-settings-daemon \
 	mesa-utils libgl1-mesa-dri mesa-vulkan-drivers vulkan-tools \
 	libegl-mesa0 libgles2 libgbm1 \
 	wpasupplicant iw wireless-regdb \
 	alsa-ucm-conf alsa-utils \
 	iio-sensor-proxy \
+	locales fonts-noto-cjk fonts-noto-color-emoji \
+	ibus ibus-libpinyin ibus-gtk3 ibus-gtk4 \
+	sudo dconf-cli \
 	ca-certificates \
 	rmtfs tqftpserv
 apt-get clean
@@ -58,6 +69,12 @@ set -e
 echo hotdogb > /etc/hostname
 printf "127.0.0.1 localhost\n127.0.1.1 hotdogb\n" > /etc/hosts
 echo "root:root" | chpasswd
+
+# Normal desktop account.  Phosh runs as this user; root keeps the serial
+# console and the SSH login the test scripts use.
+useradd -m -s /bin/bash \
+	-G sudo,video,render,audio,input,netdev,plugdev mmzc
+echo "mmzc:0717" | chpasswd
 
 mkdir -p /etc/systemd/network
 cat > /etc/systemd/network/10-usb0.network <<EOF
@@ -110,11 +127,59 @@ vt = 1
 
 [default_session]
 command = "phosh-session"
-user = "root"
+user = "mmzc"
 EOF
 systemctl enable greetd
 systemctl enable zramswap 2>/dev/null || true
 systemctl set-default graphical.target
+
+# --- locale and input method -------------------------------------------
+# The shipped session runs in Chinese; ROOTFS_LANG=C.UTF-8 gives an
+# English desktop instead.
+if [ "$ROOTFS_LANG" != "C.UTF-8" ]; then
+	loc=${ROOTFS_LANG%%.*}
+	enc=${ROOTFS_LANG#*.}
+	sed -i "s/^# *${loc}\.${enc} ${enc}/${loc}.${enc} ${enc}/" /etc/locale.gen
+	grep -q "^${loc}\.${enc} ${enc}" /etc/locale.gen || \
+		echo "${loc}.${enc} ${enc}" >> /etc/locale.gen
+	locale-gen
+fi
+printf 'LANG=%s\n' "$ROOTFS_LANG" > /etc/locale.conf
+update-locale LANG="$ROOTFS_LANG"
+
+# PAM reads /etc/environment for every session, including the one greetd
+# starts, so the IM variables reach Phosh without a shell profile.
+cat > /etc/environment <<EOF
+LANG=$ROOTFS_LANG
+GTK_IM_MODULE=ibus
+QT_IM_MODULE=ibus
+XMODIFIERS=@im=ibus
+EOF
+
+# IBus has to be started by the session.  squeekboard commits text
+# directly and never goes through an IM context, so this is what makes
+# pinyin work on an external keyboard.
+mkdir -p /etc/xdg/autostart
+cat > /etc/xdg/autostart/ibus-daemon.desktop <<EOF
+[Desktop Entry]
+Type=Application
+Name=IBus
+Comment=Start the IBus input method daemon
+Exec=ibus-daemon -drx
+X-GNOME-Autostart-enabled=true
+NoDisplay=true
+EOF
+chmod 644 /etc/xdg/autostart/ibus-daemon.desktop
+
+# Make libpinyin a system-wide input source, otherwise it only shows up
+# after adding it by hand in the settings dialog.
+mkdir -p /etc/dconf/profile /etc/dconf/db/local.d
+printf 'user-db:user\nsystem-db:local\n' > /etc/dconf/profile/user
+cat > /etc/dconf/db/local.d/00-input-sources <<EOF
+[org/gnome/desktop/input-sources]
+sources=[('xkb','us'),('ibus','libpinyin')]
+EOF
+dconf update
 
 # The image is built against the upstream mirror (debootstrap is fastest
 # there on the CI runner), but it ships pointing at the Tsinghua mirror:

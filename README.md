@@ -16,7 +16,8 @@ patches/    按顺序编号的补丁，`git am` 即可
 configs/    内核配置片段（merge_config.sh 用）
 docs/       实现说明、参数来源、排查方法
 reference/  从原厂 dtbo 提取的面板节点原文（数据来源，仅供对照）
-firmware/   GPU 需要的三份固件（Adreno 640：SQE / GMU / ZAP），含部署说明
+firmware/   GPU 需要的三份固件（Adreno 640：SQE / GMU / ZAP），含部署说明；
+            打包 initramfs 时也会内置这三份
 tools/      从原厂节点重新生成面板驱动的脚本
 initramfs/  最小 init（串口 gadget + 命令服务），CI 用它打包 boot.img
 boot/       32 字节空 DTBO（跑主线前必须刷，见"启动前"）
@@ -160,6 +161,23 @@ clk_ignore_unused loglevel=7 panic=0 printk.time=1 ramoops.max_reason=5 log_buf_
 它在 `.github/workflows/build.yml` 的 `env.CMDS` 里定义，由 `mkbootimg_v2.py --cmdline` 带进
 boot 镜像头；本地打包时可以直接改这一条。
 
+## initramfs 里内置的固件
+
+`msm/adreno` 是编译进内核的，probe 时就要加载 GPU 固件，而这时 rootfs（NBD 或 UFS）
+还没挂上。所以 `tools/build_initramfs.sh` 会把 `firmware/` 里的三份打进 ramdisk：
+
+```
+lib/firmware/qcom/a630_sqe.fw
+lib/firmware/qcom/a640_gmu.bin
+lib/firmware/qcom/sm8150/a640_zap.mbn
+```
+
+三份压缩后约 43 KB，`fastboot boot` 的 ~48 MiB 上限还够用（整包约 47.2 MiB）。
+Debian rootfs 里另外还有一份，供 switch_root 之后重新加载用。
+
+DSP / Wi-Fi 的固件**不放**进来：`wlanmdsp.mbn` + `slpi.*` + `adsp.*` 压缩后约
+12 MB，会让镜像超限，仍然由 `/init` 启动时从 `modem_a` 分区拷。
+
 ## 踩过的坑
 
 ## Wi-Fi（WCN3990）
@@ -292,7 +310,10 @@ Linux 驱动后，Debian 正常启动，`systemctl is-system-running` 为 `runni
 `hotdogb.netboot.init=` 单独指定。
 
 CI 会同时产出 `boot-hotdogb-netboot.img` 和 `netboot-debian.img.xz`（Debian trixie
-arm64，root/root，已配好 `172.16.42.1` 和 `serial-getty@ttyGS0`）。
+arm64，桌面用户 `mmzc`/`0717`、维护用 `root`/`root`，已配好 `172.16.42.1` 和
+`serial-getty@ttyGS0`）。Phosh 以 `mmzc` 启动，带 squeekboard 屏幕键盘、
+`phosh-mobile-settings`、中文 locale 和 Noto CJK 字体；ibus + libpinyin 供外接
+键盘使用。构建时可用 `ROOTFS_LANG=C.UTF-8` 换成英文桌面。
 
 Windows 主机步骤：
 

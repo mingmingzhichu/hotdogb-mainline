@@ -15,6 +15,12 @@
 
 ## 部署
 
+`tools/build_initramfs.sh` 会自动把这三份打进 ramdisk（压缩后约 43 KB），
+所以用 `fastboot boot` 启动的镜像不需要 rootfs 里预先有固件；驱动 probe 发生在
+rootfs 挂载之前。
+
+手动部署到已有系统（rootfs）时：
+
 ```sh
 mkdir -p /lib/firmware/qcom/sm8150
 cp qcom/a630_sqe.fw          /lib/firmware/qcom/
