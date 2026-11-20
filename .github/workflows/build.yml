@@ -12,23 +12,33 @@ env:
   KERNEL_TARBALL: ${{ inputs.kernel_tarball || 'https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.3.tar.xz' }}
   CROSS: aarch64-linux-gnu-
   CMDS: "clk_ignore_unused loglevel=7 panic=0 printk.time=1 ramoops.max_reason=5 log_buf_len=4M"
-  RELEASE_TAG: ci-latest
+  PREVIOUS_RELEASE_TAG: ci-latest
 
 permissions:
   contents: write
 
 jobs:
   clean:
-    name: clean the previous release
+    name: clean previous release assets
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Delete the previous release
+      - name: Delete previous release asset files
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete "$RELEASE_TAG" --yes --cleanup-tag || true
-          git push origin ":refs/tags/$RELEASE_TAG" 2>/dev/null || true
+          release_exists=$(gh release list --limit 100 --json tagName \
+            --jq 'any(.[]; .tagName == "ci-latest")')
+          if [ "$release_exists" = "true" ]; then
+            assets=$(gh release view "$PREVIOUS_RELEASE_TAG" \
+              --json assets --jq '.assets[].name')
+            while IFS= read -r asset; do
+              [ -n "$asset" ] || continue
+              gh release delete-asset "$PREVIOUS_RELEASE_TAG" "$asset" --yes
+            done <<< "$assets"
+          else
+            echo "No previous $PREVIOUS_RELEASE_TAG release; skipping asset cleanup"
+          fi
 
   kernel:
     name: kernel + dtb + modules
@@ -270,8 +280,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          RELEASE_DATE=$(date -u +%F)
+          RELEASE_TAG="ci-${RELEASE_DATE}-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
           gh release create "$RELEASE_TAG" \
-            --title "hotdogb CI build" \
+            --title "hotdogb CI build $RELEASE_DATE" \
             --notes "Built from ${{ github.sha }}" \
             --prerelease
           for f in boot-out/* rootfs-out/* kernel-out/modules.tar.gz; do
