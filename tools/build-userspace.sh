@@ -80,9 +80,10 @@ meson setup qrtr-build qrtr --cross-file aarch64.ini \
   -Ddefault_library=static
 meson compile -C qrtr-build
 # Find the static lib wherever meson placed it.
-QRTR_LIB=$(find qrtr-build -name 'libqrtr.a' | head -1)
+QRTR_LIB=$(find "$WORK/qrtr-build" -name 'libqrtr.a' | head -1)
 [ -n "$QRTR_LIB" ] || { echo "libqrtr.a not built" >&2; exit 1; }
-QRTR_A_DIR=$(dirname "$QRTR_LIB")
+# Absolute path: make -C <subdir> changes cwd, so a relative -L breaks.
+QRTR_A_DIR=$(cd "$(dirname "$QRTR_LIB")" && pwd)
 QRTR_INC="$WORK/qrtr/include"
 
 build_static() { # $1=dir  $2=binary  $3=extra CFLAGS  $4=extra LDLIBS
