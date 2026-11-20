@@ -76,9 +76,9 @@ EOF
 
   # iio-sensor-proxy's meson asks for dependency('udev').  That .pc file is
   # shipped by the udev package in the arch-independent /usr/share/pkgconfig,
-  # where libdir points at the *native* (x86_64) lib directory, and the build
-  # only searches /usr/lib/aarch64-linux-gnu/pkgconfig.  libudev-dev:arm64 has
-  # the correct layout, so expose it under the name meson looks for.
+  # where libdir points at the *native* (x86_64) lib directory.  libudev-dev:
+  # arm64 has the correct layout, so expose it under the name meson looks for
+  # (the search path below keeps this copy ahead of /usr/share/pkgconfig).
   sudo cp /usr/lib/aarch64-linux-gnu/pkgconfig/libudev.pc \
           /usr/lib/aarch64-linux-gnu/pkgconfig/udev.pc
   # meson.build also reads udev_dep.get_pkgconfig_variable('udevdir') to place
@@ -149,7 +149,7 @@ for p in "$REPO"/userspace-patches/libssc/*.patch; do
 done
 # -Dtests=false: the test suite needs a Python installation for the build
 # machine (python3-embed), which a cross build cannot resolve.
-PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig \
+PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig \
   meson setup libssc-build libssc --cross-file aarch64.ini \
     -Dprefix=/usr -Dlibdir=lib/aarch64-linux-gnu -Dtests=false
 meson compile -C libssc-build
@@ -176,7 +176,7 @@ for p in "$REPO"/userspace-patches/iio-sensor-proxy/0*.patch; do
   patch -d iio-sp -p1 --batch --forward < "$p"
 done
 
-PKG_CONFIG_LIBDIR="$OUT/root/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig" \
+PKG_CONFIG_LIBDIR="$OUT/root/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig" \
   meson setup isp-build iio-sp --cross-file aarch64.ini \
     -Dprefix=/usr -Dssc-support=true
 meson compile -C isp-build
