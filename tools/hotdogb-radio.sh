@@ -18,7 +18,8 @@ set -u
 FW=/lib/firmware/qcom/sm8150/oneplus7
 MPSS_PATH=/sys/class/remoteproc/remoteproc_mpss
 SLPI_PATH=/sys/class/remoteproc/remoteproc_slpi
-MODDIR=/lib/modules/hotdogb
+# CI installs modules into /lib/modules/$(uname -r) and runs depmod there.
+MODDIR=/lib/modules/$(uname -r)
 LOG=/dev/kmsg
 
 say() { echo "<6>hotdogb-radio: $*" > "$LOG" 2>/dev/null; echo "hotdogb-radio: $*"; }
@@ -130,12 +131,18 @@ do_start() {
 	say "MPSS running"
 
 	# 6. Wi-Fi modules (ath10k waits for the WLFW QMI service MPSS publishes).
-	for m in cfg80211 mac80211 ath ath10k_core; do
-		[ -f "$MODDIR/$m.ko" ] && insmod "$MODDIR/$m.ko" 2>/dev/null
-	done
+	#    CI runs depmod, so modprobe resolves dependencies; fall back to a
+	#    fixed-order insmod if modprobe is unavailable.
+	if command -v modprobe >/dev/null 2>&1; then
+		modprobe ath10k_snoc 2>/dev/null || say "modprobe ath10k_snoc failed"
+	else
+		for m in cfg80211 mac80211 ath ath10k_core; do
+			[ -f "$MODDIR/$m.ko" ] && insmod "$MODDIR/$m.ko" 2>/dev/null
+		done
+		[ -f "$MODDIR/ath10k_snoc.ko" ] && insmod "$MODDIR/ath10k_snoc.ko" 2>/dev/null
+	fi
 	[ -d /sys/module/ath10k_core ] && \
 		echo 3145760 > /sys/module/ath10k_core/parameters/debug_mask 2>/dev/null
-	[ -f "$MODDIR/ath10k_snoc.ko" ] && insmod "$MODDIR/ath10k_snoc.ko" 2>/dev/null
 
 	sleep 5
 	say "done: $(ls /sys/class/net 2>/dev/null | tr '\n' ' ')"
