@@ -27,7 +27,8 @@ mkdir -p "$WORK" "$OUT"/{sbin,lib,bin,units,include}
 PKGS=(
   build-essential gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
   libc6-dev-arm64-cross liblzma-dev:arm64
-  libglib2.0-dev:arm64 libgudev-1.0-dev:arm64
+  # iio-sensor-proxy needs libudev itself in addition to libgudev.
+  libglib2.0-dev:arm64 libgudev-1.0-dev:arm64 libudev-dev:arm64
   # qmi-glib.pc Requires: mbim-glib, so libqmi is not enough on its own.
   libqmi-glib-dev:arm64 libmbim-glib-dev:arm64
   libprotobuf-c-dev:arm64
