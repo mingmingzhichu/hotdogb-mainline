@@ -14,9 +14,11 @@ set -euxo pipefail
 CROSS=${CROSS:-aarch64-linux-gnu-}
 WORK=${WORK:-/tmp/hotdogb-userspace}
 OUT=${OUT:-out}
-# Resolve both to absolute paths before the first mkdir: the script later does
-# `cd "$WORK"`, and a relative $OUT would then point inside the build tree
-# instead of the staging tree (install: out/sbin/pd-mapper: No such file).
+# Resolve every path before the first cd/mkdir: the script later does
+# `cd "$WORK"`, and a relative $OUT or $0 would then point inside the build
+# tree instead of the staging tree / the checkout.
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+REPO=${REPO:-$(cd "$SCRIPT_DIR/.." && pwd)}
 case $WORK in /*) ;; *) WORK=$PWD/$WORK ;; esac
 case $OUT in /*) ;; *) OUT=$PWD/$OUT ;; esac
 rm -rf "$WORK" "$OUT"
@@ -120,7 +122,6 @@ build_static pd-mapper pd-mapper "" "-lqrtr -llzma"
 
 # --- libssc (pmOS-tested commit) -------------------------------------------
 SSC_COMMIT=5e699fc97d92684c6882741fc9f71cb57a33e25b
-REPO=${REPO:-$(cd "$(dirname "$0")/.." && pwd)}
 git clone https://codeberg.org/DylanVanAssche/libssc.git libssc
 git -C libssc checkout "$SSC_COMMIT"
 # Apply the vendored series in order: 0001 makes the test suite and its Python
