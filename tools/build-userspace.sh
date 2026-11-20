@@ -81,6 +81,10 @@ EOF
   # the correct layout, so expose it under the name meson looks for.
   sudo cp /usr/lib/aarch64-linux-gnu/pkgconfig/libudev.pc \
           /usr/lib/aarch64-linux-gnu/pkgconfig/udev.pc
+  # meson.build also reads udev_dep.get_pkgconfig_variable('udevdir') to place
+  # the rules; that variable only exists in udev.pc, so restore it.
+  echo 'udevdir=/lib/udev' | \
+    sudo tee -a /usr/lib/aarch64-linux-gnu/pkgconfig/udev.pc >/dev/null
 fi
 
 cd "$WORK"
