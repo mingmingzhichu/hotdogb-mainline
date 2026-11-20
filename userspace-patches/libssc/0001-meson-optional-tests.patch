@@ -1,0 +1,22 @@
+diff --git a/meson.build b/meson.build
+index 0ecac22..b39e503 100644
+--- a/meson.build
++++ b/meson.build
+@@ -98,5 +98,7 @@ headers = files()
+ 
+ subdir('data')
+ subdir('src')
+-subdir('mocking')
+-subdir('tests')
++if get_option('tests')
++  subdir('mocking')
++  subdir('tests')
++endif
+diff --git a/meson_options.txt b/meson_options.txt
+new file mode 100644
+index 0000000..77a37ce
+--- /dev/null
++++ b/meson_options.txt
+@@ -0,0 +1,2 @@
++option('tests', type: 'boolean', value: true,
++       description: 'Build the test suite and the Python mocking server')
