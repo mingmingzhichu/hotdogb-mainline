@@ -180,9 +180,17 @@ PKG_CONFIG_LIBDIR="$OUT/root/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/lib/aarch6
   meson setup isp-build iio-sp --cross-file aarch64.ini \
     -Dprefix=/usr -Dssc-support=true
 meson compile -C isp-build
-install -m 0755 isp-build/iio-sensor-proxy "$OUT/bin/" 2>/dev/null || \
-  cp isp-build/iio-sensor-proxy "$OUT/bin/"
-cp iio-sp/data/80-iio-sensor-proxy*.rules "$OUT/units/" 2>/dev/null || true
+# The executable lands next to its sources (isp-build/src/), not at the top of
+# the build directory.
+ISP_BIN=$(find isp-build -type f -name iio-sensor-proxy | head -1)
+[ -n "$ISP_BIN" ] || { echo "iio-sensor-proxy was not built" >&2; exit 1; }
+install -m 0755 "$ISP_BIN" "$OUT/bin/iio-sensor-proxy"
+# The SSC udev rule is required by hotdogb's rootfs check, so fail here rather
+# than silently shipping a sensor stack that never gets permissions.
+shopt -s nullglob
+rules=(iio-sp/data/80-iio-sensor-proxy*.rules)
+[ ${#rules[@]} -gt 0 ] || { echo "no udev rules found" >&2; exit 1; }
+cp "${rules[@]}" "$OUT/units/"
 
 ( cd "$OUT" && tar czf userspace-tools.tar.gz sbin lib bin units include )
 sha256sum "$OUT/userspace-tools.tar.gz"
