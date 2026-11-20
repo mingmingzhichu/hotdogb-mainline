@@ -5,6 +5,10 @@
 # qemu-user-static + binfmt-support on an x86_64 runner).
 #
 #   build_debian_rootfs.sh [rootdir] [output.img] [size]
+#
+# USERSPACE_TOOLS points at the directory produced by tools/build-userspace.sh
+# (its sbin/lib/bin/units subdirs).  CI cross-builds those helpers instead of
+# shipping prebuilt binaries in the repo.
 set -eu
 
 ROOT=${1:-/tmp/debroot}
@@ -15,6 +19,7 @@ MIRROR=${MIRROR:-http://deb.debian.org/debian}
 # Locale of the graphical session.  Override with ROOTFS_LANG=C.UTF-8 for
 # an English desktop.
 ROOTFS_LANG=${ROOTFS_LANG:-zh_CN.UTF-8}
+USERSPACE_TOOLS=${USERSPACE_TOOLS:-}
 case "$ROOTFS_LANG" in
 *.*) ;;
 *) echo "ROOTFS_LANG must look like zh_CN.UTF-8" >&2; exit 1 ;;
@@ -256,14 +261,29 @@ if [ -d "$LOCAL_FIRMWARE" ]; then
 	# static binaries.  The unit is manual-only and guarded by
 	# ConditionPathExists on modem.mdt, so it cannot start MPSS at boot.
 	install -d "$ROOT/usr/local/sbin"
-	install -m 0755 "$SCRIPT_DIR/../firmware/radio-tools/pd-mapper" \
-		"$SCRIPT_DIR/../firmware/radio-tools/rmtfs" \
-		"$SCRIPT_DIR/../firmware/radio-tools/tqftpserv" "$ROOT/usr/local/sbin/"
+	if [ -n "$USERSPACE_TOOLS" ]; then
+		# CI cross-builds these; see tools/build-userspace.sh.
+		for t in pd-mapper rmtfs tqftpserv; do
+			install -m 0755 "$USERSPACE_TOOLS/sbin/$t" \
+				"$ROOT/usr/local/sbin/$t"
+		done
+		# libssc + SSC-enabled iio-sensor-proxy (sensor data via SLPI).
+		[ -d "$USERSPACE_TOOLS/lib" ] && \
+			cp -a "$USERSPACE_TOOLS/lib"/. "$ROOT/usr/lib/aarch64-linux-gnu/"
+		[ -f "$USERSPACE_TOOLS/bin/iio-sensor-proxy" ] && \
+			install -m 0755 "$USERSPACE_TOOLS/bin/iio-sensor-proxy" \
+				"$ROOT/usr/bin/iio-sensor-proxy"
+		[ -d "$USERSPACE_TOOLS/units" ] && \
+			cp -a "$USERSPACE_TOOLS/units"/. "$ROOT/usr/lib/udev/rules.d/"
+		ldconfig -r "$ROOT" 2>/dev/null || true
+	else
+		echo "USERSPACE_TOOLS not set: radio helpers and sensor stack omitted" >&2
+	fi
 	install -m 0755 "$SCRIPT_DIR/hotdogb-radio.sh" \
 		"$ROOT/usr/local/sbin/hotdogb-radio.sh"
 	install -m 0644 "$SCRIPT_DIR/hotdogb-radio.service" \
 		"$ROOT/etc/systemd/system/hotdogb-radio.service"
-	echo "installed hotdogb-radio (manual start) + static pd-mapper"
+	echo "installed hotdogb-radio (manual start) + userspace tools"
 elif [ -n "${HOTDOGB_FIRMWARE_BACKUP:-}" ]; then
 	echo "firmware backup not found: $FIRMWARE_BACKUP" >&2
 	exit 1

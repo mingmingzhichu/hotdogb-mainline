@@ -144,12 +144,34 @@ jobs:
           path: busybox-static-arm64/
           if-no-files-found: error
 
+  userspace-tools:
+    name: cross-build radio + sensor userspace helpers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build pd-mapper/rmtfs/tqftpserv, libssc and SSC iio-sensor-proxy
+        run: bash tools/build-userspace.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: userspace-tools
+          path: out/userspace-tools.tar.gz
+          if-no-files-found: error
+
   rootfs-base:
     name: Build Debian netboot rootfs base
     runs-on: ubuntu-24.04
+    needs: [userspace-tools]
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: userspace-tools
+          path: userspace-tools
 
       - name: Install the rootfs tools
         run: |
@@ -160,8 +182,10 @@ jobs:
       - name: Build and stage the Debian arm64 rootfs
         run: |
           sudo update-binfmts --enable qemu-aarch64 || true
-          mkdir -p out
-          sudo sh tools/build_debian_rootfs.sh /tmp/debroot out/netboot-debian.img 6G
+          mkdir -p userspace-tools-unpacked out
+          tar xzf userspace-tools/userspace-tools.tar.gz -C userspace-tools-unpacked
+          sudo env USERSPACE_TOOLS="$PWD/userspace-tools-unpacked" \
+            sh tools/build_debian_rootfs.sh /tmp/debroot out/netboot-debian.img 6G
           xz -T0 -0 out/netboot-debian.img
 
       - uses: actions/upload-artifact@v4
@@ -217,9 +241,17 @@ jobs:
                    usr/lib/aarch64-linux-gnu/libvulkan_freedreno.so \
                    usr/lib/firmware/qcom/a630_sqe.fw \
                    usr/lib/firmware/qcom/a640_gmu.bin \
-                   usr/lib/firmware/qcom/sm8150/a640_zap.mbn; do
+                   usr/lib/firmware/qcom/sm8150/a640_zap.mbn \
+                   usr/local/sbin/hotdogb-radio.sh \
+                   usr/local/sbin/pd-mapper \
+                   usr/bin/iio-sensor-proxy; do
             sudo test -e "/mnt/hotdogb-root/$f" || { echo "missing /$f"; exit 1; }
           done
+          # The SSC sensor stack must ship its udev rules and libssc driver.
+          sudo find /mnt/hotdogb-root/usr/lib -name 'libssc*.so*' | grep -q . || {
+            echo "missing libssc"; exit 1; }
+          sudo find /mnt/hotdogb-root/usr/lib/udev/rules.d -name '*ssc*.rules' | grep -q . || {
+            echo "missing SSC udev rules"; exit 1; }
           sudo test -f /mnt/hotdogb-root/etc/locale.conf
           sudo test -f /mnt/hotdogb-root/etc/xdg/autostart/ibus-daemon.desktop
           sudo grep -q '^mmzc:' /mnt/hotdogb-root/etc/passwd
