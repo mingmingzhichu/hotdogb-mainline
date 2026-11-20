@@ -144,18 +144,12 @@ jobs:
           path: busybox-static-arm64/
           if-no-files-found: error
 
-  rootfs:
-    name: Debian netboot rootfs
+  rootfs-base:
+    name: Build Debian netboot rootfs base
     runs-on: ubuntu-24.04
-    needs: [kernel]
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: kernel-out
-          path: kernel-out
 
       - name: Install the rootfs tools
         run: |
@@ -163,14 +157,49 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             debootstrap qemu-user-static binfmt-support xz-utils
 
-      - name: Build the Debian arm64 rootfs
+      - name: Build and stage the Debian arm64 rootfs
         run: |
           sudo update-binfmts --enable qemu-aarch64 || true
           mkdir -p out
           sudo sh tools/build_debian_rootfs.sh /tmp/debroot out/netboot-debian.img 6G
-          # The netboot image has to carry the kernel modules: the panel,
-          # touchscreen, amplifier and sound card drivers are all modules,
-          # so without them the rootfs boots to a black screen.
+          xz -T0 -0 out/netboot-debian.img
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rootfs-base
+          path: out/netboot-debian.img.xz
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
+
+  rootfs:
+    name: Integrate kernel modules into rootfs
+    runs-on: ubuntu-24.04
+    needs: [kernel, rootfs-base]
+    timeout-minutes: 240
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel-out
+          path: kernel-out
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: rootfs-base
+          path: rootfs-base
+
+      - name: Install the rootfs integration tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends kmod xz-utils
+
+      - name: Add kernel modules and verify the rootfs
+        run: |
+          mkdir -p out
+          unxz rootfs-base/netboot-debian.img.xz
+          mv rootfs-base/netboot-debian.img out/
+          # The netboot image has to carry the matching kernel modules: the
+          # panel, touchscreen, amplifier and sound card drivers are modules.
           sudo mkdir -p /mnt/hotdogb-root
           sudo mount -o loop out/netboot-debian.img /mnt/hotdogb-root
           sudo mkdir -p /mnt/hotdogb-root/lib/modules
