@@ -50,7 +50,7 @@ apt-get install -y --no-install-recommends \
 	openssh-server systemd-sysv \
 	phosh squeekboard gnome-console greetd zram-tools \
 	phosh-mobile-settings phosh-plugins phosh-mobile-tweaks \
-	gnome-session-bin gnome-settings-daemon \
+	gnome-session-bin gnome-settings-daemon libglib2.0-bin \
 	mesa-utils libgl1-mesa-dri mesa-vulkan-drivers vulkan-tools \
 	libegl-mesa0 libgles2 libgbm1 \
 	wpasupplicant iw wireless-regdb \
