@@ -64,7 +64,7 @@ apt-get install -y --no-install-recommends \
 apt-get clean
 '
 
-chroot "$ROOT" /bin/bash -c '
+ROOTFS_LANG="$ROOTFS_LANG" chroot "$ROOT" /bin/bash -c '
 set -e
 echo hotdogb > /etc/hostname
 printf "127.0.0.1 localhost\n127.0.1.1 hotdogb\n" > /etc/hosts
@@ -177,7 +177,7 @@ mkdir -p /etc/dconf/profile /etc/dconf/db/local.d
 printf 'user-db:user\nsystem-db:local\n' > /etc/dconf/profile/user
 cat > /etc/dconf/db/local.d/00-input-sources <<EOF
 [org/gnome/desktop/input-sources]
-sources=[('xkb','us'),('ibus','libpinyin')]
+sources=[("xkb", "us"), ("ibus", "libpinyin")]
 EOF
 dconf update
 
