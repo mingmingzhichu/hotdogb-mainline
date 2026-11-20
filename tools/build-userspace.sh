@@ -70,6 +70,14 @@ EOF
   sudo dpkg --add-architecture arm64
   sudo apt-get update
   sudo apt-get install -y --no-install-recommends "${PKGS[@]}"
+
+  # iio-sensor-proxy's meson asks for dependency('udev').  That .pc file is
+  # shipped by the udev package in the arch-independent /usr/share/pkgconfig,
+  # where libdir points at the *native* (x86_64) lib directory, and the build
+  # only searches /usr/lib/aarch64-linux-gnu/pkgconfig.  libudev-dev:arm64 has
+  # the correct layout, so expose it under the name meson looks for.
+  sudo cp /usr/lib/aarch64-linux-gnu/pkgconfig/libudev.pc \
+          /usr/lib/aarch64-linux-gnu/pkgconfig/udev.pc
 fi
 
 cd "$WORK"
