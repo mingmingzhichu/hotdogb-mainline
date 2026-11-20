@@ -8,8 +8,8 @@ the OnePlus 7T (hotdogb).
 
 Signed-off-by: mingmingzhichu <lihaoyu0717@outlook.com>
 ---
- .../display/panel/samsung,sofef03f.yaml       | 71 +++++++++++++++++++
- 1 file changed, 71 insertions(+)
+ .../display/panel/samsung,sofef03f.yaml       | 82 ++++++++++++++++++++++
+ 1 file changed, 82 insertions(+)
  create mode 100644 Documentation/devicetree/bindings/display/panel/samsung,sofef03f.yaml
 
 diff --git a/Documentation/devicetree/bindings/display/panel/samsung,sofef03f.yaml b/Documentation/devicetree/bindings/display/panel/samsung,sofef03f.yaml
@@ -17,7 +17,7 @@ new file mode 100644
 index 000000000..ef4e8a8df
 --- /dev/null
 +++ b/Documentation/devicetree/bindings/display/panel/samsung,sofef03f.yaml
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,82 @@
 +# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 +%YAML 1.2
 +---
@@ -54,6 +54,17 @@ index 000000000..ef4e8a8df
 +    description: I/O supply (1.8V)
 +
 +  port: true
++
++  esd-check-enabled:
++    type: boolean
++    description: |
++      Poll the panel status register periodically and recover the link on
++      failure.  Disabled by default; the periodic DCS read contends with the
++      command-mode MDP stream and a false positive power-cycles a live panel.
++
++  qcom,esd-check-enabled:
++    type: boolean
++    description: Vendor alias for esd-check-enabled.
 +
 +required:
 +  - compatible

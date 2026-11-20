@@ -21,9 +21,12 @@ off again.
 The panel runs at 90 Hz, the vendor's default timing, in a single fixed
 mode.
 
-An ESD check runs every two seconds: register 0x0a is read in LP mode
+An ESD check can run every two seconds: register 0x0a is read in LP mode
 and must return 0x9c.  On mismatch the panel is power cycled,
-re-initialised and its brightness restored.
+re-initialised and its brightness restored.  It is opt-in via the
+esd-check-enabled (or vendor qcom,esd-check-enabled) DT property and off
+by default: the DCS read contends with the command-mode MDP stream and a
+false positive power-cycles a panel with a live pipeline.
 
 The first DSI command burst after power-on occasionally times out,
 leaving the panel uninitialised behind a lit but black screen; retry the
@@ -33,8 +36,8 @@ Signed-off-by: mingmingzhichu <lihaoyu0717@outlook.com>
 ---
  drivers/gpu/drm/panel/Kconfig                 |  12 +
  drivers/gpu/drm/panel/Makefile                |   1 +
- .../gpu/drm/panel/panel-samsung-sofef03f.c    | 656 ++++++++++++++++++
- 3 files changed, 669 insertions(+)
+ .../gpu/drm/panel/panel-samsung-sofef03f.c    | 667 ++++++++++++++++++
+ 3 files changed, 680 insertions(+)
  create mode 100644 drivers/gpu/drm/panel/panel-samsung-sofef03f.c
 
 diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
@@ -77,7 +80,7 @@ new file mode 100644
 index 0000000..73faf7d
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-samsung-sofef03f.c
-@@ -0,0 +1,656 @@
+@@ -0,0 +1,667 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Samsung SOFEF03F M FHD panel driver
@@ -110,7 +113,7 @@ index 0000000..73faf7d
 + * 2046 are the vendor's HBM encoding ("level + 1023") and are only valid
 + * after the panel has been switched to its high-brightness gamma with
 + * 0x53 0xe0.  Writing them in normal mode wraps the brightness around, so
-+ * keep the range at 1023 and leave HBM to a future change.
++ * keep the range at 1023; hitting the top switches to HBM instead.
 + */
 +#define SOFEF03F_MAX_BRIGHTNESS		1023
 +#define SOFEF03F_MIN_BRIGHTNESS		6
@@ -130,6 +133,7 @@ index 0000000..73faf7d
 +	struct mutex lock;		/* serialises DSI writes */
 +	bool hbm;
 +	u16 brightness;
++	bool esd_enabled;
 +	struct delayed_work esd_work;
 +};
 +
@@ -492,8 +496,9 @@ index 0000000..73faf7d
 +	if (ret < 0)
 +		return ret;
 +
-+	schedule_delayed_work(&ctx->esd_work,
-+			      msecs_to_jiffies(SOFEF03F_ESD_PERIOD_MS));
++	if (ctx->esd_enabled)
++		schedule_delayed_work(&ctx->esd_work,
++				      msecs_to_jiffies(SOFEF03F_ESD_PERIOD_MS));
 +
 +	return dsi_ctx.accum_err;
 +}
@@ -618,6 +623,15 @@ index 0000000..73faf7d
 +	mipi_dsi_set_drvdata(dsi, ctx);
 +	mutex_init(&ctx->lock);
 +	INIT_DELAYED_WORK(&ctx->esd_work, sofef03f_esd_work);
++
++	/*
++	 * ESD polling is opt-in: every check issues a DCS read while the
++	 * command-mode MDP is streaming, and a false positive power-cycles the
++	 * panel under a live pipeline.  The vendor enables it from the device
++	 * tree, so honour both the generic and the vendor property name.
++	 */
++	ctx->esd_enabled = device_property_read_bool(dev, "esd-check-enabled") ||
++		device_property_read_bool(dev, "qcom,esd-check-enabled");
 +
 +	dsi->lanes = 4;
 +	dsi->format = MIPI_DSI_FMT_RGB888;
