@@ -43,6 +43,9 @@ cleanup() {
 trap cleanup EXIT
 
 cp /etc/resolv.conf "$ROOT/etc/resolv.conf"
+mkdir -p "$ROOT/etc/apt/sources.list.d"
+printf 'deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] %s %s non-free-firmware\n' \
+	"$MIRROR" "$SUITE" > "$ROOT/etc/apt/sources.list.d/non-free-firmware.list"
 ROOTFS_LANG="$ROOTFS_LANG" chroot "$ROOT" /bin/bash -c '
 set -e
 apt-get update
@@ -53,7 +56,7 @@ apt-get install -y --no-install-recommends \
 	gnome-session-bin gnome-settings-daemon libglib2.0-bin \
 	mesa-utils libgl1-mesa-dri mesa-vulkan-drivers vulkan-tools \
 	libegl-mesa0 libgles2 libgbm1 \
-	wpasupplicant iw wireless-regdb \
+	wpasupplicant iw wireless-regdb firmware-atheros \
 	alsa-ucm-conf alsa-utils \
 	iio-sensor-proxy \
 	locales fonts-noto-cjk fonts-noto-color-emoji \
@@ -190,16 +193,17 @@ cat > /etc/apt/sources.list.d/debian.sources <<EOF
 Types: deb
 URIs: https://mirrors.tuna.tsinghua.edu.cn/debian
 Suites: trixie trixie-updates
-Components: main
+Components: main non-free-firmware
 Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 
 Types: deb
 URIs: https://mirrors.tuna.tsinghua.edu.cn/debian-security
 Suites: trixie-security
-Components: main
+Components: main non-free-firmware
 Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 EOF
 rm -f /etc/apt/sources.list
+rm -f /etc/apt/sources.list.d/non-free-firmware.list
 
 rm -f /usr/bin/qemu-aarch64-static
 rm -rf /var/lib/apt/lists/*
@@ -209,12 +213,44 @@ install -m 0755 "$(dirname "$0")/hotdogb-audio.sh" \
 	"$ROOT/usr/local/sbin/hotdogb-audio"
 
 # Adreno 640 firmware for the msm/freedreno stack.
-FIRMWARE=$(cd "$(dirname "$0")/../firmware" && pwd)
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+FIRMWARE="$SCRIPT_DIR/../firmware"
 install -d "$ROOT/lib/firmware/qcom/sm8150"
 install -m 0644 "$FIRMWARE/qcom/a630_sqe.fw" "$ROOT/lib/firmware/qcom/"
 install -m 0644 "$FIRMWARE/qcom/a640_gmu.bin" "$ROOT/lib/firmware/qcom/"
 install -m 0644 "$FIRMWARE/qcom/sm8150/a640_zap.mbn" \
 	"$ROOT/lib/firmware/qcom/sm8150/"
+
+# Device-specific firmware is kept locally in this Git-ignored directory.
+# Set HOTDOGB_FIRMWARE_BACKUP to use another directory containing firmware_mnt/.
+FIRMWARE_BACKUP=${HOTDOGB_FIRMWARE_BACKUP:-"$SCRIPT_DIR/../firmware"}
+LOCAL_FIRMWARE="$FIRMWARE_BACKUP/firmware_mnt"
+if [ -d "$LOCAL_FIRMWARE" ]; then
+	for file in modem.mdt modem.b00 modem.b31 wlanmdsp.mbn bdwlan.bin \
+		slpi.mdt adsp.mdt; do
+		if [ ! -f "$LOCAL_FIRMWARE/$file" ]; then
+			echo "missing local firmware: $LOCAL_FIRMWARE/$file" >&2
+			exit 1
+		fi
+	done
+
+	MODEM_FW="$ROOT/lib/firmware/qcom/sm8150/oneplus7"
+	ATH10K_FW="$ROOT/lib/firmware/ath10k/WCN3990/hw1.0"
+	install -d "$MODEM_FW" "$ATH10K_FW"
+	install -m 0644 "$LOCAL_FIRMWARE"/modem.mdt \
+		"$LOCAL_FIRMWARE"/modem.b* "$MODEM_FW/"
+	install -m 0644 "$LOCAL_FIRMWARE"/wlanmdsp.mbn \
+		"$LOCAL_FIRMWARE"/slpi.* "$LOCAL_FIRMWARE"/*.jsn "$MODEM_FW/"
+	install -m 0644 "$LOCAL_FIRMWARE"/adsp.* "$ROOT/lib/firmware/qcom/sm8150/"
+	install -m 0644 "$LOCAL_FIRMWARE"/wlanmdsp.mbn "$ATH10K_FW/"
+	install -m 0644 "$LOCAL_FIRMWARE/bdwlan.bin" "$ATH10K_FW/board.bin"
+	echo "included local OnePlus 7T modem, WLAN, SLPI and ADSP firmware"
+elif [ -n "${HOTDOGB_FIRMWARE_BACKUP:-}" ]; then
+	echo "firmware backup not found: $FIRMWARE_BACKUP" >&2
+	exit 1
+else
+	echo "warning: local device firmware omitted; populate firmware/firmware_mnt or set HOTDOGB_FIRMWARE_BACKUP" >&2
+fi
 
 # The mounts must be gone before mke2fs walks the tree.
 cleanup

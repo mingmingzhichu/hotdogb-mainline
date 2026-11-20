@@ -131,8 +131,15 @@ if [ -z "$NETBOOT" ]; then
 		[ -r "$d/uevent" ] || continue
 		[ "$(sed -n 's/^PARTNAME=//p' "$d/uevent")" = modem_a ] || continue
 		if mount -t vfat -o ro "/dev/${d##*/}" /tmp/modempart; then
+			mkdir -p /lib/firmware/qcom/sm8150/oneplus7
 			cp -f /tmp/modempart/image/wlanmdsp.mbn \
 				/lib/firmware/qcom/sm8150/oneplus7/ 2>/dev/null
+			for f in /tmp/modempart/image/modem.*; do
+				cp -f "$f" /lib/firmware/qcom/sm8150/oneplus7/ 2>/dev/null
+			done
+			for f in /tmp/modempart/image/*.jsn; do
+				cp -f "$f" /lib/firmware/qcom/sm8150/oneplus7/ 2>/dev/null
+			done
 			# The sensor DSP (SLPI, which runs the sensor core) is
 			# loaded from the same FAT image, ~6 MB.
 			for f in /tmp/modempart/image/slpi.*; do
@@ -187,14 +194,13 @@ if [ -z "$NETBOOT" ]; then
 		say "$(cat $r/name) $(cat $r/state 2>/dev/null)"
 	done
 
-	# modem.mbn is 75 MB, which makes the boot image too big for
-	# `fastboot boot` on this bootloader, so it is copied in afterwards and
-	# /bin/radio_up.sh starts MPSS and the wireless modules.
+	# Keep the split MPSS image out of initramfs; it was copied from modem_a
+	# above, and /bin/radio_up.sh starts MPSS and the wireless modules.
 	FW=/lib/firmware/qcom/sm8150/oneplus7
-	if [ -f "$FW/modem.mbn" ]; then
+	if [ -f "$FW/modem.mdt" ]; then
 		/bin/radio_up.sh > /tmp/radio.log 2>&1
 	else
-		say "modem.mbn absent; run /bin/radio_up.sh after copying it"
+		say "modem.mdt absent; run /bin/radio_up.sh after copying it"
 	fi
 ) &
 fi

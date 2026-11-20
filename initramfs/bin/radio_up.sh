@@ -1,15 +1,15 @@
 #!/bin/busybox.static sh
 # Bring up MPSS and then the WCN3990 wireless stack.
 #
-# Run from the console once /lib/firmware/qcom/sm8150/oneplus7/modem.mbn is in
+# Run from the console once /lib/firmware/qcom/sm8150/oneplus7/modem.mdt is in
 # place.  Nothing here touches a partition.
 say() { echo "<6>radio: $*" > /dev/kmsg 2>/dev/null; }
 
 FW=/lib/firmware/qcom/sm8150/oneplus7
 MPSS=/sys/class/remoteproc/remoteproc0
 
-if [ ! -f "$FW/modem.mbn" ]; then
-	echo "modem.mbn missing in $FW"
+if [ ! -f "$FW/modem.mdt" ]; then
+	echo "modem.mdt missing in $FW"
 	exit 1
 fi
 

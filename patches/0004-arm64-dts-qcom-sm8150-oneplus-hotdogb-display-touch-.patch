@@ -341,10 +341,10 @@ index 3d3cf66..7e0c501 100755
 + *   - mpss_mem 160 MiB at 0x8dc00000 (the stock modem image spans that), with
 + *     venus/slpi/ipa/gpu/spss/cdsp pushed up behind it,
 + *   - WCN3990 rails as the vendor describes (ch1 is vreg_l10c_3p3),
-+ *   - MPSS running the single-file OOS10 modem.mbn, which is what provides the
-+ *     WLFW QMI service ath10k waits for.
-+ * The firmware is staged at runtime (76 MB is too large for the initramfs), so
-+ * the remoteproc is enabled here but started from userspace.
++ *   - MPSS using the handset's split modem.mdt + bXX firmware, matching its
++ *     wlanmdsp.mbn.
++ * The firmware is kept in the Debian rootfs (or copied from modem_a by
++ * initramfs), so the remoteproc is enabled here but started from userspace.
 + */
 +&rmtfs_mem {
 +	reg = <0x0 0xfc201000 0x0 0x200000>;
@@ -384,7 +384,7 @@ index 3d3cf66..7e0c501 100755
 +
 +&remoteproc_mpss {
 +	status = "okay";
-+	firmware-name = "qcom/sm8150/oneplus7/modem.mbn";
++	firmware-name = "qcom/sm8150/oneplus7/modem.mdt";
 +};
 +
 +&remoteproc_adsp {

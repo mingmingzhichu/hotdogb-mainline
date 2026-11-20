@@ -42,6 +42,7 @@ CI 的 rootfs 会装 **Phosh**（比 Plasma Mobile 轻很多，NBD over USB 2.0
 ## 已经装进 rootfs
 
 - `wpasupplicant`、`iw`、`wireless-regdb`
+- `firmware-atheros`（WCN3990 ath10k 通用固件）
 - `alsa-ucm-conf`、`alsa-utils`
 - `iio-sensor-proxy`
 - `rmtfs`、`tqftpserv`
@@ -56,19 +57,29 @@ CI 的 rootfs 会装 **Phosh**（比 Plasma Mobile 轻很多，NBD over USB 2.0
 
 ## 固件从哪来
 
+rootfs 构建会安装 Debian `firmware-atheros`，并从项目内
+`firmware/firmware_mnt/` 预装本机 modem、WLAN、ADSP、SLPI 固件。
+也可以通过 `HOTDOGB_FIRMWARE_BACKUP` 指定另一个包含 `firmware_mnt/` 的目录。
+设备专用固件目录由 `.gitignore` 排除；CI 没有本机备份，因此发布的 CI rootfs 不含这些文件。
+
 `modem_a` 是 FAT16（设备上是 `/dev/sde4`），只读挂上即可，不用写：
 
 ```sh
 mkdir -p /mnt/modem /lib/firmware/qcom/sm8150/oneplus7
 mount -t vfat -o ro /dev/sde4 /mnt/modem
 cp /mnt/modem/image/wlanmdsp.mbn /lib/firmware/qcom/sm8150/oneplus7/
+cp /mnt/modem/image/modem.mdt /mnt/modem/image/modem.b* \
+   /lib/firmware/qcom/sm8150/oneplus7/
 cp /mnt/modem/image/adsp.*     /lib/firmware/qcom/sm8150/
 cp /mnt/modem/image/slpi.*     /lib/firmware/qcom/sm8150/oneplus7/
-umount /mnt
+cp /mnt/modem/image/*.jsn      /lib/firmware/qcom/sm8150/oneplus7/
+mkdir -p /lib/firmware/ath10k/WCN3990/hw1.0
+cp /mnt/modem/image/bdwlan.bin /lib/firmware/ath10k/WCN3990/hw1.0/board.bin
+umount /mnt/modem
 ```
 
-MPSS 的 `modem.mbn` 也在这个分区；`modem` 的 remoteproc 需要它和
-`rmtfs`（EFS 从 `modemst1/2` 拷到 RAM）。
+MPSS 在本机分区里是 `modem.mdt` + 分片格式；DTS 的 remoteproc 现在请求
+`modem.mdt`。这套本机分片固件尚待真机验证。
 
 ## Wi-Fi（WCN3990）
 

@@ -3,10 +3,9 @@
 #
 #   /bin/wifi_up.sh
 #
-# Stages the wireless payload from the USB LUN into RAM (the modules and the
-# 75 MB modem image are far too big for the initramfs), starts MPSS, waits for
-# it to publish the WLFW service, then loads the modules.  Idempotent enough to
-# re-run after a failure: insmod errors are reported but not fatal.
+# Stages the kernel modules and ath10k files from the USB LUN into RAM, then
+# starts MPSS and loads the modules. The split image and handset-specific
+# wlanmdsp.mbn come from modem_a.
 FWQ=/lib/firmware/qcom/sm8150/oneplus7
 BOARD=/lib/firmware/ath10k/WCN3990/hw1.0
 
@@ -20,7 +19,6 @@ if ! grep -q ' /mnt/lun ' /proc/mounts; then
 fi
 
 cp -f /mnt/lun/*.ko /lib/modules/ 2>/dev/null
-cp -f /mnt/lun/modem.mbn "$FWQ/" 2>/dev/null
 cp -f /mnt/lun/board-2.bin /mnt/lun/firmware-5.bin "$BOARD/" 2>/dev/null
 [ -f /mnt/lun/wifiscan ] && cp -f /mnt/lun/wifiscan /bin/wifiscan
 [ -f /mnt/lun/qrtr-lookup ] && cp -f /mnt/lun/qrtr-lookup /bin/qrtr-lookup
@@ -31,10 +29,10 @@ echo "staged:"
 ls /lib/modules
 ls "$FWQ" "$BOARD"
 
-# wlanmdsp.mbn comes from the handset's own modem partition, extracted by
-# /init; modem.mbn has to be supplied here.
-if [ ! -f "$FWQ/modem.mbn" ]; then
-	echo "no modem.mbn, stopping before MPSS"
+# The split MPSS image and wlanmdsp.mbn are extracted from the handset's own
+# modem partition by /init.
+if [ ! -f "$FWQ/modem.mdt" ]; then
+	echo "no modem.mdt, stopping before MPSS"
 	exit 1
 fi
 
