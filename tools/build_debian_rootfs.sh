@@ -256,9 +256,9 @@ if [ -d "$LOCAL_FIRMWARE" ]; then
 	# static binaries.  The unit is manual-only and guarded by
 	# ConditionPathExists on modem.mdt, so it cannot start MPSS at boot.
 	install -d "$ROOT/usr/local/sbin"
-	install -m 0755 "$SCRIPT_DIR/radio-tools/pd-mapper" \
-		"$SCRIPT_DIR/radio-tools/rmtfs" \
-		"$SCRIPT_DIR/radio-tools/tqftpserv" "$ROOT/usr/local/sbin/"
+	install -m 0755 "$SCRIPT_DIR/../firmware/radio-tools/pd-mapper" \
+		"$SCRIPT_DIR/../firmware/radio-tools/rmtfs" \
+		"$SCRIPT_DIR/../firmware/radio-tools/tqftpserv" "$ROOT/usr/local/sbin/"
 	install -m 0755 "$SCRIPT_DIR/hotdogb-radio.sh" \
 		"$ROOT/usr/local/sbin/hotdogb-radio.sh"
 	install -m 0644 "$SCRIPT_DIR/hotdogb-radio.service" \
