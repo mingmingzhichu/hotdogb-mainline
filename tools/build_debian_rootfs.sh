@@ -245,6 +245,25 @@ if [ -d "$LOCAL_FIRMWARE" ]; then
 	install -m 0644 "$LOCAL_FIRMWARE"/wlanmdsp.mbn "$ATH10K_FW/"
 	install -m 0644 "$LOCAL_FIRMWARE/bdwlan.bin" "$ATH10K_FW/board.bin"
 	echo "included local OnePlus 7T modem, WLAN, SLPI and ADSP firmware"
+
+	# Radio service chain.  The initramfs radio section is skipped under
+	# hotdogb.netboot=1, so on a netbooted Debian nothing starts MPSS unless
+	# hotdogb-radio.service is started explicitly.  The Debian packages rmtfs
+	# and tqftpserv are already installed (with the correct -r -P -s flags for
+	# rmtfs); the only missing piece is pd-mapper, which Debian does not
+	# package, so ship the statically linked aarch64 binary.  The ordered
+	# start script prefers the distro services and only falls back to the
+	# static binaries.  The unit is manual-only and guarded by
+	# ConditionPathExists on modem.mdt, so it cannot start MPSS at boot.
+	install -d "$ROOT/usr/local/sbin"
+	install -m 0755 "$SCRIPT_DIR/radio-tools/pd-mapper" \
+		"$SCRIPT_DIR/radio-tools/rmtfs" \
+		"$SCRIPT_DIR/radio-tools/tqftpserv" "$ROOT/usr/local/sbin/"
+	install -m 0755 "$SCRIPT_DIR/hotdogb-radio.sh" \
+		"$ROOT/usr/local/sbin/hotdogb-radio.sh"
+	install -m 0644 "$SCRIPT_DIR/hotdogb-radio.service" \
+		"$ROOT/etc/systemd/system/hotdogb-radio.service"
+	echo "installed hotdogb-radio (manual start) + static pd-mapper"
 elif [ -n "${HOTDOGB_FIRMWARE_BACKUP:-}" ]; then
 	echo "firmware backup not found: $FIRMWARE_BACKUP" >&2
 	exit 1

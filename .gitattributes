@@ -3,4 +3,5 @@
 * text=auto
 *.patch text eol=lf
 *.sh text eol=lf
+*.service text eol=lf
 initramfs/init text eol=lf

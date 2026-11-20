@@ -1,0 +1,19 @@
+[Unit]
+Description=OnePlus 7T (hotdogb) modem / WCN3990 radio stack
+Documentation=file:/usr/share/doc/hotdogb-radio
+# Do not autostart: on a netbooted system the root filesystem lives on NBD
+# over the same USB link the Wi-Fi stack would use, and starting MPSS before
+# rmtfs/pd-mapper/tqftpserv are ready resets the SoC into EDL.  Start this
+# explicitly with `systemctl start hotdogb-radio` once the system is up.
+After=multi-user.target
+ConditionPathExists=/lib/firmware/qcom/sm8150/oneplus7/modem.mdt
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/hotdogb-radio.sh start
+ExecStop=/usr/local/sbin/hotdogb-radio.sh stop
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
