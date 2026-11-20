@@ -64,6 +64,7 @@ apt-get install -y --no-install-recommends \
 	wpasupplicant iw wireless-regdb firmware-atheros \
 	alsa-ucm-conf alsa-utils \
 	iio-sensor-proxy \
+	modemmanager gnss-share libqmi-utils geoclue-2.0 \
 	locales fonts-noto-cjk fonts-noto-color-emoji \
 	ibus ibus-libpinyin ibus-gtk3 ibus-gtk4 \
 	sudo dconf-cli \
@@ -140,6 +141,32 @@ EOF
 systemctl enable greetd
 systemctl enable zramswap 2>/dev/null || true
 systemctl set-default graphical.target
+
+# --- GNSS / GPS (MPSS Location service over QRTR) -------------------------
+# GPS runs in MPSS, which publishes the Location service (QMI 16) on QRTR
+# once hotdogb-radio.sh brings MPSS up.  ModemManager >= 1.23 talks to that
+# service over D-Bus; gnss-share in "mm" mode reads NMEA from ModemManager
+# and shares it on a socket for geoclue/clients.  All manual: starting
+# before MPSS is up just fails, so leave these disabled at boot.
+cat > /etc/gnss-share.conf <<EOF
+# GPS is in MPSS; use the ModemManager driver (QMI Location over QRTR).
+device_driver="mm"
+socket="/var/run/gnss-share.sock"
+group="geoclue"
+agps_directory="/var/cache/gnss-share"
+EOF
+chmod 644 /etc/gnss-share.conf
+# Configure the MPSS GNSS engine once the Location service is up.  Manual
+# one-shot; run after `hotdogb-radio.sh start` reaches MPSS running.
+cat > /usr/local/sbin/hotdogb-gps-setup <<SETUPEOF
+#!/bin/sh
+# One-time GNSS setup over the MPSS Location service (QRTR).
+set -e
+qmicli -d qrtr://0 --loc-set-engine-lock=mt
+qmicli -d qrtr://0 --loc-set-nmea-types=all
+echo "GNSS engine configured; start gnss-share + ModemManager to read NMEA"
+SETUPEOF
+chmod 755 /usr/local/sbin/hotdogb-gps-setup
 
 # --- locale and input method -------------------------------------------
 # The shipped session runs in Chinese; ROOTFS_LANG=C.UTF-8 gives an

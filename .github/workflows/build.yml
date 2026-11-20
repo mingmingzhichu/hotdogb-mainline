@@ -243,8 +243,11 @@ jobs:
                    usr/lib/firmware/qcom/a640_gmu.bin \
                    usr/lib/firmware/qcom/sm8150/a640_zap.mbn \
                    usr/local/sbin/hotdogb-radio.sh \
+                   usr/local/sbin/hotdogb-gps-setup \
                    usr/local/sbin/pd-mapper \
-                   usr/bin/iio-sensor-proxy; do
+                   usr/bin/iio-sensor-proxy \
+                   usr/bin/gnss-share \
+                   etc/gnss-share.conf; do
             sudo test -e "/mnt/hotdogb-root/$f" || { echo "missing /$f"; exit 1; }
           done
           # The SSC sensor stack must ship its udev rules and libssc driver.
