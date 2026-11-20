@@ -257,16 +257,15 @@ if [ -d "$LOCAL_FIRMWARE" ]; then
 	# and tqftpserv are already installed (with the correct -r -P -s flags for
 	# rmtfs); the only missing piece is pd-mapper, which Debian does not
 	# package, so ship the statically linked aarch64 binary.  The ordered
-	# start script prefers the distro services and only falls back to the
-	# static binaries.  The unit is manual-only and guarded by
+	# start script prefers the distro rmtfs/tqftpserv services.  The unit
+	# is manual-only and guarded by
 	# ConditionPathExists on modem.mdt, so it cannot start MPSS at boot.
 	install -d "$ROOT/usr/local/sbin"
 	if [ -n "$USERSPACE_TOOLS" ]; then
-		# CI cross-builds these; see tools/build-userspace.sh.
-		for t in pd-mapper rmtfs tqftpserv; do
-			install -m 0755 "$USERSPACE_TOOLS/sbin/$t" \
-				"$ROOT/usr/local/sbin/$t"
-		done
+		# CI cross-builds pd-mapper (not in Debian).  rmtfs/tqftpserv
+		# come from the Debian packages installed above.
+		install -m 0755 "$USERSPACE_TOOLS/sbin/pd-mapper" \
+			"$ROOT/usr/local/sbin/pd-mapper"
 		# libssc + SSC-enabled iio-sensor-proxy (sensor data via SLPI).
 		[ -d "$USERSPACE_TOOLS/lib" ] && \
 			cp -a "$USERSPACE_TOOLS/lib"/. "$ROOT/usr/lib/aarch64-linux-gnu/"

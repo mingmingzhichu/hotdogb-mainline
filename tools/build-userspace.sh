@@ -19,13 +19,37 @@ mkdir -p "$WORK" "$OUT"/{sbin,lib,bin,units}
 
 PKGS=(
   build-essential gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
-  libc6-dev-arm64-cross libudev-dev:arm64 liblzma-dev:arm64
+  libc6-dev-arm64-cross liblzma-dev:arm64
   libglib2.0-dev:arm64 libgudev-1.0-dev:arm64 libqmi-glib-dev:arm64
   libprotobuf-c-dev:arm64 libqrtr-dev:arm64
   protobuf-compiler meson ninja-build pkg-config
   libqmi-utils curl git patch xz-utils
 )
+# rmtfs and tqftpserv come from the Debian packages already installed by
+# build_debian_rootfs.sh; only pd-mapper is missing there (no Debian package).
+# Building it statically needs libqrtr.a but not libudev, avoiding the
+# unavailable static libudev on Ubuntu.
 if [ "${INSTALL_DEPS:-1}" = 1 ]; then
+  # Ubuntu's native archive (archive/security.ubuntu.com) has no binary-arm64
+  # index: enabling arm64 makes `apt update` 404.  Pin every existing source
+  # to amd64, then add ports.ubuntu.com for the arm64 dev packages.
+  sudo mkdir -p /etc/apt/sources.list.d
+  # deb822 .sources files -> insert Architectures after the Types line.
+  for f in /etc/apt/sources.list.d/*.sources; do
+    [ -f "$f" ] || continue
+    if ! grep -q '^Architectures:' "$f"; then
+      sudo sed -i '/^Types:/a Architectures: amd64' "$f"
+    fi
+  done
+  # Legacy one-line sources in /etc/apt/sources.list, if any.
+  if [ -s /etc/apt/sources.list ]; then
+    sudo sed -i -E 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list
+  fi
+  cat <<'EOF' | sudo tee /etc/apt/sources.list.d/arm64-ports.list
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main universe
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main universe
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main universe
+EOF
   sudo dpkg --add-architecture arm64
   sudo apt-get update
   sudo apt-get install -y --no-install-recommends "${PKGS[@]}"
@@ -72,24 +96,10 @@ build_static() { # $1=dir  $2=binary  $3=extra CFLAGS  $4=extra LDLIBS
 }
 
 # pd-mapper needs libqrtr + liblzma; its .qmi is pre-generated in-tree.
+# rmtfs/tqftpserv are intentionally NOT built here: Debian ships both, and
+# hotdogb-radio.sh prefers those services (rmtfs with the correct -r -P -s).
 gitclone https://github.com/andersson/pd-mapper.git pd-mapper
 build_static pd-mapper pd-mapper "" "-lqrtr -llzma"
-
-# rmtfs needs libudev + pthread.  Static libudev is awkward, so link qrtr
-# static but udev dynamically is not acceptable for initramfs-free rootfs;
-# Debian ships rmtfs as a package, so these static copies are only fallbacks
-# and are linked with the same static flags where possible.
-gitclone https://github.com/andersson/rmtfs.git rmtfs
-build_static rmtfs rmtfs "" "-lqrtr -ludev -lpthread"
-
-# tqftpserv uses meson with the cross file created above.
-gitclone https://github.com/andersson/tqftpserv.git tqftpserv
-PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig \
-  meson setup tqftpserv-build tqftpserv --cross-file aarch64.ini \
-    -Dsystemd-unit-prefix=/lib/systemd/system
-meson compile -C tqftpserv-build
-file tqftpserv-build/tqftpserv | grep -q aarch64
-install -m 0755 tqftpserv-build/tqftpserv "$OUT/sbin/tqftpserv"
 
 # --- libssc (pmOS-tested commit) -------------------------------------------
 SSC_COMMIT=5e699fc97d92684c6882741fc9f71cb57a33e25b
@@ -105,8 +115,15 @@ PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig \
     -Dprefix=/usr -Dlibdir=lib/aarch64-linux-gnu
 meson compile -C libssc-build
 DESTDIR="$OUT/root" meson install -C libssc-build --no-rebuild
+# The generated .pc has prefix=/usr, but the staged library lives under
+# $OUT/root/usr.  Rewrite prefix so iio-sensor-proxy's dependency('libssc')
+# resolves the headers/libs from the staging tree, not the host root.
+SSC_PC="$OUT/root/usr/lib/aarch64-linux-gnu/pkgconfig/libssc.pc"
+[ -f "$SSC_PC" ] || { echo "libssc.pc not found at $SSC_PC" >&2; exit 1; }
+sed -i "s|^prefix=.*|prefix=$OUT/root/usr|" "$SSC_PC"
 cp -a "$OUT/root"/usr/lib/aarch64-linux-gnu/libssc* "$OUT/lib/" 2>/dev/null || true
 cp -a "$OUT/root"/usr/include/libssc* "$OUT/include/" 2>/dev/null || true
+cp "$SSC_PC" "$OUT/lib/"
 
 # --- iio-sensor-proxy + SSC patches ----------------------------------------
 # The SSC patch series (11 patches) is vendored in userspace-patches/ so the

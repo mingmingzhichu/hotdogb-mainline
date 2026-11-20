@@ -88,8 +88,13 @@ do_start() {
 				[ -b "/dev/${d##*/}" ] && \
 					dd if="/dev/${d##*/}" of="/run/hotdogb/rmtfs/$out" bs=1M 2>/dev/null
 			done
-			/usr/local/sbin/rmtfs -r -P -s >/run/hotdogb/rmtfs.log 2>&1 &
-			say "rmtfs started via static binary"
+			if [ -x /usr/local/sbin/rmtfs ]; then
+				/usr/local/sbin/rmtfs -r -P -s >/run/hotdogb/rmtfs.log 2>&1 &
+				say "rmtfs started via static binary"
+			else
+				say "rmtfs service unavailable - MPSS may assert"
+				return 1
+			fi
 		fi
 	fi
 
@@ -100,8 +105,13 @@ do_start() {
 		   systemctl start tqftpserv >/dev/null 2>&1 && pgrep -x tqftpserv >/dev/null; then
 			say "tqftpserv started via systemd"
 		else
-			/usr/local/sbin/tqftpserv >/run/hotdogb/tqftpserv.log 2>&1 &
-			say "tqftpserv started via static binary"
+			if [ -x /usr/local/sbin/tqftpserv ]; then
+				/usr/local/sbin/tqftpserv >/run/hotdogb/tqftpserv.log 2>&1 &
+				say "tqftpserv started via static binary"
+			else
+				say "tqftpserv service unavailable - MPSS may assert"
+				return 1
+			fi
 		fi
 	fi
 
