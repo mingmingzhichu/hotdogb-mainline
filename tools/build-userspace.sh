@@ -14,15 +14,24 @@ set -euxo pipefail
 CROSS=${CROSS:-aarch64-linux-gnu-}
 WORK=${WORK:-/tmp/hotdogb-userspace}
 OUT=${OUT:-out}
+# Resolve both to absolute paths before the first mkdir: the script later does
+# `cd "$WORK"`, and a relative $OUT would then point inside the build tree
+# instead of the staging tree (install: out/sbin/pd-mapper: No such file).
+case $WORK in /*) ;; *) WORK=$PWD/$WORK ;; esac
+case $OUT in /*) ;; *) OUT=$PWD/$OUT ;; esac
 rm -rf "$WORK" "$OUT"
-mkdir -p "$WORK" "$OUT"/{sbin,lib,bin,units}
+mkdir -p "$WORK" "$OUT"/{sbin,lib,bin,units,include}
 
 PKGS=(
   build-essential gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
   libc6-dev-arm64-cross liblzma-dev:arm64
-  libglib2.0-dev:arm64 libgudev-1.0-dev:arm64 libqmi-glib-dev:arm64
-  libprotobuf-c-dev:arm64 libqrtr-dev:arm64
-  protobuf-compiler meson ninja-build pkg-config
+  libglib2.0-dev:arm64 libgudev-1.0-dev:arm64
+  # qmi-glib.pc Requires: mbim-glib, so libqmi is not enough on its own.
+  libqmi-glib-dev:arm64 libmbim-glib-dev:arm64
+  libprotobuf-c-dev:arm64
+  # protoc-c is a native tool but libssc regenerates its protobuf sources.
+  protobuf-compiler protobuf-c-compiler
+  meson ninja-build pkg-config
   libqmi-utils curl git patch xz-utils
 )
 # rmtfs and tqftpserv come from the Debian packages already installed by
@@ -33,6 +42,8 @@ if [ "${INSTALL_DEPS:-1}" = 1 ]; then
   # Ubuntu's native archive (archive/security.ubuntu.com) has no binary-arm64
   # index: enabling arm64 makes `apt update` 404.  Pin every existing source
   # to amd64, then add ports.ubuntu.com for the arm64 dev packages.
+  PORTS_SUITE=${PORTS_SUITE:-$(. /etc/os-release 2>/dev/null && echo "$VERSION_CODENAME")}
+  [ -n "$PORTS_SUITE" ] || PORTS_SUITE=noble
   sudo mkdir -p /etc/apt/sources.list.d
   # deb822 .sources files -> insert Architectures after the Types line.
   for f in /etc/apt/sources.list.d/*.sources; do
@@ -43,12 +54,15 @@ if [ "${INSTALL_DEPS:-1}" = 1 ]; then
   done
   # Legacy one-line sources in /etc/apt/sources.list, if any.
   if [ -s /etc/apt/sources.list ]; then
-    sudo sed -i -E 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list
+    # Idempotent: drop any existing [arch=...] before adding ours, otherwise a
+    # re-run yields "deb [arch=amd64] [arch=amd64] http://..." and apt dies
+    # with "Malformed entry ... (URI parse)".
+    sudo sed -i -E 's/^deb (\[[^]]*\] )?/deb [arch=amd64] /' /etc/apt/sources.list
   fi
-  cat <<'EOF' | sudo tee /etc/apt/sources.list.d/arm64-ports.list
-deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main universe
-deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main universe
-deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main universe
+  cat <<EOF | sudo tee /etc/apt/sources.list.d/arm64-ports.list
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $PORTS_SUITE main universe
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $PORTS_SUITE-updates main universe
+deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $PORTS_SUITE-security main universe
 EOF
   sudo dpkg --add-architecture arm64
   sudo apt-get update
@@ -70,9 +84,11 @@ system = 'linux'
 cpu_family = 'aarch64'
 cpu = 'aarch64'
 endian = 'little'
-[properties]
-sys_root = '/usr/aarch64-linux-gnu'
 EOF
+# No [properties] sys_root here: the arm64 -dev packages are installed
+# multiarch-style under the real /usr/include and /usr/lib/aarch64-linux-gnu,
+# so the paths from pkg-config are already correct.  Setting sys_root would
+# make meson prepend it again and gcc would miss glib.h.
 
 # --- qrtr (provides libqrtr.a, needed by all three radio tools) ------------
 gitclone https://github.com/andersson/qrtr.git qrtr
@@ -107,13 +123,18 @@ SSC_COMMIT=5e699fc97d92684c6882741fc9f71cb57a33e25b
 REPO=${REPO:-$(cd "$(dirname "$0")/.." && pwd)}
 git clone https://codeberg.org/DylanVanAssche/libssc.git libssc
 git -C libssc checkout "$SSC_COMMIT"
-# Threading fix from the pmOS SSC series, applied before compiling libssc.
-[ -f "$REPO"/userspace-patches/libssc/20251205-PR103.patch ] && \
-  patch -d libssc -p1 --batch --forward \
-    < "$REPO"/userspace-patches/libssc/20251205-PR103.patch
+# Apply the vendored series in order: 0001 makes the test suite and its Python
+# mocking server optional, 20251205-PR103 is the pmOS threading fix.
+for p in "$REPO"/userspace-patches/libssc/*.patch; do
+  [ -f "$p" ] || continue
+  echo "applying $p"
+  patch -d libssc -p1 --batch --forward < "$p"
+done
+# -Dtests=false: the test suite needs a Python installation for the build
+# machine (python3-embed), which a cross build cannot resolve.
 PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig \
   meson setup libssc-build libssc --cross-file aarch64.ini \
-    -Dprefix=/usr -Dlibdir=lib/aarch64-linux-gnu
+    -Dprefix=/usr -Dlibdir=lib/aarch64-linux-gnu -Dtests=false
 meson compile -C libssc-build
 DESTDIR="$OUT/root" meson install -C libssc-build --no-rebuild
 # The generated .pc has prefix=/usr, but the staged library lives under
