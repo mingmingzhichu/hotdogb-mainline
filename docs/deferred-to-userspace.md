@@ -11,7 +11,7 @@ Debian/rootfs 起来之后应该删掉，换成标准做法。
 | `rmtfs` / `pd-mapper` / `tqftpserv` | initramfs 里手写脚本起 | pmOS 现成的包 + service 单元，不需要自己维护 |
 | 亮度曲线 / 自动亮度 | 线性映射 | 内核只给原始亮度，曲线放 userspace；或者把原厂曲线搬进面板驱动（二选一） |
 | 触摸手势、校准 | 无 | libinput |
-| **传感器**（加速度/陀螺/光感/距离） | SLPI 已起，SSC 服务在 QRTR 上（service 400）；客户端（libssc + iio-sensor-proxy + hexagonrpcd）已编进镜像，但 FastRPC attach 会让 SLPI 崩（缺 `fastrpc_mem` carveout） | 先补内核 DTS，再开 `hotdogb-sensors.service`（默认关闭） |
+| **传感器**（加速度/陀螺/光感/距离） | SLPI 已起，SSC 服务在 QRTR 上（service 400）；客户端（libssc + iio-sensor-proxy + hexagonrpcd）已编进镜像。FastRPC 节点形态已按 sdm845 修正（`patches/0014`：池 + vmids + 不带 iommus 的单个 compute-cb） | 真机确认 attach 不再崩后，去掉 `hotdogb-sensors.service` 的 opt-in 开关 |
 | **GPS** | MPSS 已发布 Location service（QMI 16），没有客户端 | `gnss-share`（或 libqmi 的 LOC），归 Debian |
 | 串口 gadget 控制台 `con` | initramfs 里自建 | 正常 getty / SSH，`con` 删掉 |
 | WCN3990 / DSP 固件每次开机从 LUN 暂存 | initramfs 里的 `wifi_up.sh` | Debian rootfs 构建从项目本地 `firmware/firmware_mnt` 复制；公开 CI 不含设备专用固件 |

@@ -26,14 +26,14 @@
 #   - iio-sensor-proxy therefore has to be (re)started after the attach, since
 #     its unit runs long before this one.
 #
-# KNOWN BLOCKER on sm8150: the FastRPC attach itself faults the SLPI firmware
-#   qcom_q6v5_pas 2400000.remoteproc: fatal error received:
-#       EX:kernel:0x0:frpck_0_0:0x8c:PC=0xb0242928
-#   arm-smmu: Unhandled context fault ... cbfrsynra=0x5a1
-# for both INIT_ATTACH and INIT_ATTACH_SNS, after which remoteproc recovers the
-# DSP.  The fastrpc node in upstream sm8150.dtsi has no memory-region, unlike
-# the working cdsp node on sdm845, so this needs a kernel/DTS fix before the
-# sensor stack can work; see the unit file for the opt-in flag.
+# This needs patches/0014 in the kernel: the sm8150 fastrpc node has to look
+# like the sdm845 one, i.e. a reserved 16 MiB pool, a qcom,vmids list and a
+# single compute context bank without iommus.  With the translated context
+# banks the DSP faults on its first access and remoteproc has to recover it:
+#   arm-smmu: Unhandled context fault: iova=0x1fffff000, cbfrsynra=0x5a1
+#   qcom_q6v5_pas: fatal error received: EX:sensor_process:0x1:frpck_0_0
+# The sensor process is hypervisor-bypassed on the SMMU and works with physical
+# addresses, so the registry files also have to be readable by hexagonrpcd.
 
 set -eu
 
@@ -71,6 +71,10 @@ populate_hexagonfs() {
 	if [ ! -e "$HEXAGONFS/socinfo" ] && [ -d /sys/devices/soc0 ]; then
 		ln -s /sys/devices/soc0 "$HEXAGONFS/socinfo"
 	fi
+	# The registry is copied from persist, where it is root-only; the DSP asks
+	# hexagonrpcd for those calibration files and gets EACCES if they are not
+	# readable by the user the daemon runs as.
+	chmod -R a+rX "$HEXAGONFS" 2>/dev/null || true
 	say "registry: $(ls "$HEXAGONFS/sensors/registry" 2>/dev/null | wc -l) files"
 }
 

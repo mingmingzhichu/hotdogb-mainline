@@ -224,11 +224,13 @@ $ touch /etc/hotdogb-sensors.enable
 $ systemctl start hotdogb-sensors
 ```
 
-原因是 sm8150 的 FastRPC 目前还 attach 不上：`INIT_ATTACH` 和 `INIT_ATTACH_SNS` 都会让
-SLPI 固件报 `EX:kernel:0x0:frpck_0_0`，同时 `apps_smmu` 在 SLPI fastrpc 的 compute-cb
-（`cbfrsynra=0x5a1`）上触发 context fault，remoteproc 随后重启 DSP。上游 `sm8150.dtsi`
-的 fastrpc 节点没有 `memory-region`，而 sdm845 上能用的 cdsp 节点有 `fastrpc_mem`
-（`shared-dma-pool`）——这是下一步要补的内核工作。
+原因是 sm8150 的 FastRPC 节点形态不对：`INIT_ATTACH` 和 `INIT_ATTACH_SNS` 都会让 SLPI
+固件报 `EX:sensor_process:0x1:frpck_0_0`，同时 `apps_smmu` 在 SLPI fastrpc 的
+compute-cb（`cbfrsynra=0x5a1`）上触发 context fault，remoteproc 随后重启 DSP。
+上游 `sm8150.dtsi` 给这三个 stream ID 挂了**带地址翻译**的 context bank，而
+sdm845（唯一能跑传感器的上游 SLPI）是**一个不带 `iommus`** 的 compute-cb —— 传感器进程
+在 SMMU 上是旁路的、用物理地址。`patches/0014` 按 sdm845 的形状补齐了 `fastrpc_mem`
+池（16 MB / 4 MB 对齐）、`qcom,vmids` 和单个 `compute-cb@0`，等真机确认后再去掉上面的开关。
 详见 [`docs/evidence/2026-11-21-fastrpc-sns-attach.md`](docs/evidence/2026-11-21-fastrpc-sns-attach.md)
 和 [`docs/evidence/2026-11-04-sensors-slpi.md`](docs/evidence/2026-11-04-sensors-slpi.md)。
 

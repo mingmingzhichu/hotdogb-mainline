@@ -6,16 +6,17 @@ Documentation=file:/usr/share/doc/hotdogb-radio
 # PD and makes it read the sensor registry, so iio-sensor-proxy must not talk
 # to the SSC before this unit has run (the start script restarts it).
 #
-# OPT-IN AND CURRENTLY EXPERIMENTAL.  On sm8150 the FastRPC reverse tunnel does
-# not attach: both INIT_ATTACH and INIT_ATTACH_SNS fault the SLPI firmware
-# (qcom_q6v5_pas: fatal error received: EX:kernel:frpck_0_0) together with an
-# SMMU context fault on the compute-cb that belongs to the SLPI fastrpc node,
-# and remoteproc then recovers the DSP.  Until fastrpc works on this SoC the
-# unit must never run unattended, hence the flag file:
+# The sensor stack needs patches/0014: without the sdm845-shaped fastrpc node
+# (reserved pool + qcom,vmids + one untranslated compute context) every attach
+# faults the SLPI firmware
+#   qcom_q6v5_pas: fatal error received: EX:sensor_process:0x1:frpck_0_0
+#   arm-smmu: Unhandled context fault ... cbfrsynra=0x5a1
+# and remoteproc then recovers the DSP.  The flag keeps the unit off by default
+# until that path has been confirmed on hardware:
 #
 #     touch /etc/hotdogb-sensors.enable && systemctl start hotdogb-sensors
 #
-# Requires= still pulls the radio chain in on demand, so nothing starts at boot.
+# Requires= pulls the radio chain in on demand, so nothing starts at boot.
 ConditionPathExists=/etc/hotdogb-sensors.enable
 Requires=hotdogb-radio.service
 After=hotdogb-radio.service

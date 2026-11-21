@@ -138,10 +138,12 @@ iio-sensor-proxy &
 隧道向主处理器读注册表的，镜像里另外带了 `hexagonrpcd` 和 `hotdogb-sensors.service`
 （从 `persist` 分区取注册表 → 起服务 → 重启 `iio-sensor-proxy`）。
 
-当前 sm8150 的 FastRPC 还 attach 不上：`INIT_ATTACH` / `INIT_ATTACH_SNS` 都会让 SLPI
-报 `EX:kernel:frpck_0_0` 并触发 SMMU context fault，所以服务默认关闭，需要
-`touch /etc/hotdogb-sensors.enable` 才允许启动。细节和下一步（DTS 里的 `fastrpc_mem`
-carveout）见 `docs/evidence/2026-11-21-fastrpc-sns-attach.md`。
+当前 sm8150 的 FastRPC 节点形态不对：`INIT_ATTACH` / `INIT_ATTACH_SNS` 都会让 SLPI
+报 `EX:sensor_process:0x1:frpck_0_0` 并触发 SMMU context fault。sdm845 的写法是单个
+不带 `iommus` 的 compute-cb（传感器进程在 SMMU 上旁路），`patches/0014` 已经按这个形状
+补了 `fastrpc_mem` 池、`qcom,vmids` 和 `compute-cb@0`；服务在真机确认前仍需
+`touch /etc/hotdogb-sensors.enable` 才允许启动。细节见
+`docs/evidence/2026-11-21-fastrpc-sns-attach.md`。
 
 ## 音频
 
