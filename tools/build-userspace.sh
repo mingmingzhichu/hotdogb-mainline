@@ -89,7 +89,24 @@ EOF
 fi
 
 cd "$WORK"
-gitclone() { git clone --depth 1 "$1" "$2"; }
+# Every dependency is fetched from the network and both hosts used here
+# (github, codeberg, gitlab.freedesktop.org) occasionally answer 5xx or time
+# out, which used to abort the whole job after hexagonrpcd and pd-mapper had
+# already been built.  Retry with a growing backoff instead.
+retry() { # $1=attempts, rest=command
+  local n=$1 i=1
+  shift
+  until "$@"; do
+    if [ "$i" -ge "$n" ]; then
+      echo "giving up after $n attempts: $*" >&2
+      return 1
+    fi
+    echo "retrying ($i/$n) in $((i * 5))s: $*" >&2
+    sleep $((i * 5))
+    i=$((i + 1))
+  done
+}
+gitclone() { retry 4 git clone --depth 1 "$1" "$2"; }
 
 # Meson cross file used by qrtr, tqftpserv, libssc and iio-sensor-proxy.
 cat > aarch64.ini <<EOF
@@ -147,13 +164,14 @@ build_static pd-mapper pd-mapper "" "-lqrtr -llzma"
 # binary has no external dependencies and the meson test suite would otherwise
 # need a build-machine Python (and we only ship the daemon).
 HEXAGONRPC_COMMIT=da7a3742ab8d5273a281b70ee11f16fb2cb6a690
-git clone https://github.com/linux-msm/hexagonrpc.git hexagonrpc
+retry 4 git clone https://github.com/linux-msm/hexagonrpc.git hexagonrpc
 git -C hexagonrpc checkout "$HEXAGONRPC_COMMIT"
 # The distro's <misc/fastrpc.h> predates the 'attr' member of struct
 # fastrpc_invoke_args that hexagonrpc uses, so take the UAPI header from the
 # kernel at a pinned tag instead of vendoring a copy here.
 mkdir -p frhdr/misc
-curl -fsSL "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/include/uapi/misc/fastrpc.h?h=v6.17" \
+curl -fsSL --retry 3 --retry-delay 5 \
+  "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/plain/include/uapi/misc/fastrpc.h?h=v6.17" \
   -o frhdr/misc/fastrpc.h
 grep -q 'attr' frhdr/misc/fastrpc.h || { echo "fastrpc.h lacks 'attr'" >&2; exit 1; }
 ${CROSS}gcc -O2 -D_GNU_SOURCE \
@@ -169,7 +187,7 @@ install -m 0755 hexagonrpcd "$OUT/sbin/hexagonrpcd"
 
 # --- libssc (pmOS-tested commit) -------------------------------------------
 SSC_COMMIT=5e699fc97d92684c6882741fc9f71cb57a33e25b
-git clone https://codeberg.org/DylanVanAssche/libssc.git libssc
+retry 4 git clone https://codeberg.org/DylanVanAssche/libssc.git libssc
 git -C libssc checkout "$SSC_COMMIT"
 # Apply the vendored series in order: 0001 makes the test suite and its Python
 # mocking server optional, 20251205-PR103 is the pmOS threading fix.
@@ -200,7 +218,7 @@ cp "$SSC_PC" "$OUT/lib/"
 # build is reproducible and does not depend on pmaports history.  They apply
 # in order to the pinned upstream commit.
 ISP_COMMIT=fe56bdba1243cc5f6a652eb75d11ae1d1957ff7e
-git clone https://gitlab.freedesktop.org/hadess/iio-sensor-proxy.git iio-sp
+retry 4 git clone https://gitlab.freedesktop.org/hadess/iio-sensor-proxy.git iio-sp
 git -C iio-sp checkout "$ISP_COMMIT"
 for p in "$REPO"/userspace-patches/iio-sensor-proxy/0*.patch; do
   [ -f "$p" ] || continue
