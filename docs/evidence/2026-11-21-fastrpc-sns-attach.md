@@ -1,8 +1,8 @@
-# SSC 传感器：缺的是 FastRPC 文件服务与内核支持（2026-11-21）
+# SSC 传感器：FastRPC 反向隧道与 sm8150 的节点形态（2026-11-21）
 
 SLPI 能起、QRTR 上能看到 SSC（service 400），但 `iio-sensor-proxy` 一直拿不到传感器。
-这次把链路逐段验完，结论是**两个不同的问题**：用户态缺 `hexagonrpcd`，内核侧 FastRPC
-还 attach 不上。
+链路逐段验下来是三个独立的问题：用户态缺 `hexagonrpcd`、缺 FastRPC 的预留内存，
+以及**DTS 的 compute context 形态不对**。前两个已解决，第三个由 `patches/0014` 修。
 
 ## 1. libssc 的 SUID 查询返回 0 个传感器
 
@@ -38,68 +38,91 @@ pmOS 的 [Qualcomm Snapdragon Sensor Core](https://wiki.postmarketos.org/wiki/Qu
 | `acdb` / `dsp` | `/vendor/etc/acdbdata` / `/vendor/dsp` | ❌ 同上（传感器用不到） |
 | `socinfo` | `/sys/devices/soc0` | ✅ |
 
-内核侧没有问题：`CONFIG_QCOM_FASTRPC=m`，SLPI 起来后 `/dev/fastrpc-sdsp` 存在
+内核侧 fastrpc 本身可用：`CONFIG_QCOM_FASTRPC=m`，SLPI 起来后 `/dev/fastrpc-sdsp` 存在
 （`2400000.remoteproc`，`label = "sdsp"`），ADSP 是 `/dev/fastrpc-adsp`。
 
-## 3. 真正的拦路虎：FastRPC attach 把 SLPI 打崩
+## 3. 第一层：没有预留内存，attach 时 DSP 拿到没映射的地址
 
-在 SLPI 健康的状态下（`state = running`）分别试两种 attach：
-
-```
-$ hexagonrpcd -f /dev/fastrpc-sdsp -d adsp -s -R ...   # INIT_ATTACH_SNS
-Could not attach to FastRPC node: Broken pipe
-$ hexagonrpcd -f /dev/fastrpc-sdsp -d adsp -R ...      # INIT_ATTACH
-Could not attach to FastRPC node: Broken pipe
-```
-
-两次内核都记录了同一类故障：
-
-```
-arm-smmu 15000000.iommu: Unhandled context fault: fsr=0x402, iova=0x1fffff000,
-                         fsynr=0x5f0001, cbfrsynra=0x5a1, cb=11
-qcom_q6v5_pas 2400000.remoteproc: fatal error received:
-                         EX:kernel:0x0:frpck_0_0:0x8c:PC=0xb0242928
-remoteproc remoteproc0: crash detected in slpi: type fatal error
-remoteproc remoteproc0: recovering slpi
-```
-
-`0x5a1` 正是 SLPI fastrpc 的 `compute-cb@1` 的 SID（`sm8150.dtsi`），`frpck` 是 DSP 侧的
-fastrpc 内核模块；也就是 attach 的 invoke 让 DSP 访问了一块没建立映射的缓冲区，DSP 直接
-fatal，随后 remoteproc 把它拉起来。日志里还有一条线索：
+`sm8150.dtsi` 的 sdsp fastrpc 节点没有 `memory-region`，于是：
 
 ```
 qcom,fastrpc 2400000.remoteproc:...: no reserved DMA memory for FASTRPC
+arm-smmu 15000000.iommu: Unhandled context fault: iova=0x1fffff000, cbfrsynra=0x5a1
+qcom_q6v5_pas 2400000.remoteproc: fatal error received: EX:kernel:frpck_0_0
 ```
 
-对照 sdm845：`sdm845.dtsi` 里 cdsp 的 fastrpc 节点带 `memory-region = <&fastrpc_mem>`，
-而 `fastrpc_mem` 是 `compatible = "shared-dma-pool"`、`alignment = 0x400000`、
-`size = 0x1000000`、`reusable` 的池子；`sm8150.dtsi` 的两个 fastrpc 节点
-（sdsp / cdsp）**都没有** `memory-region`。所以下一步要做的内核/DTS 工作是：
+下游只有一个池（`adsp_region`）：`shared-dma-pool`、16 MB、4 MB 对齐、`reusable`。
+把它加进 `reserved-memory` 并挂到 sdsp 之后，`assigned reserved memory node fastrpc-mem`
+出现，`/dev/fastrpc-sdsp` 正常，SMMU fault 消失——但 attach 仍然把 SLPI 打崩。
 
-1. 在 `sm8150.dtsi` 的 `reserved-memory` 里加 `fastrpc_mem`（shared-dma-pool，16 MB，
-   4 MB 对齐），并给 sdsp 的 fastrpc 节点加 `memory-region`；
-2. 如果 attach 仍然 fault，再确认 DSP 侧是否要求 `sensorspd` 单独的 PD 固件——
-   `sensorspd.mbn` 在本机固件目录里不存在（只有 `slpi.*`、`adsp.*`、`modem.*`、`wlanmdsp.mbn`）。
+## 4. 第二层（真正的根因）：compute context 必须是 sdm845 的形态
 
-## 4. 已经入库的部分
+上游唯一让 SLPI 传感器跑通的是 sdm845，它的 fastrpc 节点是：
 
+```dts
+label = "sdsp";
+qcom,non-secure-domain;
+qcom,vmids = <QCOM_SCM_VMID_HLOS QCOM_SCM_VMID_MSS_MSA
+              QCOM_SCM_VMID_SSC_Q6 QCOM_SCM_VMID_ADSP_Q6>;
+memory-region = <&fastrpc_mem>;
+#address-cells = <1>;
+#size-cells = <0>;
+
+compute-cb@0 {
+	compatible = "qcom,fastrpc-compute-cb";
+	reg = <0>;
+};
+```
+
+关键是**只有一个 compute context bank，而且完全没有 `iommus`**：传感器进程在 SMMU 上是
+旁路的，用物理地址访问那块由 hypervisor 分配的池。sm8150 原本给同样的 stream ID 挂了三个
+**带翻译**的 context bank（`0x5a1`–`0x5a3`），DSP 第一次访问就落进它不该看到的页表：
+
+```
+arm-smmu 15000000.iommu: Unhandled context fault: fsr=0x402, iova=0x1fffff000, cbfrsynra=0x5a1
+qcom_q6v5_pas 2400000.remoteproc: fatal error received:
+                         EX:sensor_process:0x1:frpck_0_0:0x5b
+```
+
+同一颗 SoC（sm8150）在别的设备上有过完全相同的现象和结论，见
+[bentlybro: Mainline Linux on the Galaxy Tab S6](https://bentlybro.com/posts/mainline-linux-on-the-galaxy-tab-s6-a-32-byte-field-and-one-line-of-device-tree)。
+
+另外两点容易误判：
+
+- `qcom,vmids` 不能省。7.3.3 的 `fastrpc_rpmsg_probe()` 对 sdsp 会把
+  `qcom_scm_assign_mem()` 的返回值当失败处理（6.x 只是忽略），没有 vmids 时报
+  `Assign memory protection call failed -22` 并让 probe 失败。DSP 崩过一次之后
+  那块内存已经归 DSP 所有，重新 probe 的重复赋值也必然 `-22`，所以这个错误是
+  “SLPI 崩过”的后果，不是原因。
+- 传感器 PD 确实在 SLPI 上：厂商 DT 的 `qcom,msm-ssc-sensors` 写的是
+  `qcom,firmware-name = "slpi"`，`-f /dev/fastrpc-sdsp` 是对的。
+
+## 5. 已经入库的部分
+
+- `patches/0014-arm64-dts-qcom-sm8150-fix-the-SLPI-fastrpc-node.patch`：`fastrpc_mem`
+  池（16 MB / 4 MB 对齐 / reusable）+ sdsp 的 `qcom,vmids`、`memory-region`，并把三个
+  带 `iommus` 的 compute-cb 换成单个 `compute-cb@0`。
 - `tools/build-userspace.sh` 交叉编译 `hexagonrpcd`（`userspace-tools` 产物里的
   `sbin/hexagonrpcd`）。它需要较新的 `<misc/fastrpc.h>`（`struct fastrpc_invoke_args`
   的 `attr` 成员），构建时从内核 v6.17 取该 UAPI 头。
 - `tools/hotdogb-sensors.sh` + `hotdogb-sensors.service`：挂 `persist` → 搭 HexagonFS →
   等 `/dev/fastrpc-sdsp` → 起 `hexagonrpcd` → 重启 `iio-sensor-proxy`。
-- 服务**默认关闭**，要 `/etc/hotdogb-sensors.enable` 才允许启动——attach 会让 SLPI
-  崩一次，绝不能无人值守地跑。
+- 服务暂时仍要 `/etc/hotdogb-sensors.enable` 才启动，等真机确认 attach 不再崩溃后
+  去掉这个开关。
 
 ## 复现
 
 ```
-$ mount -o ro /dev/sda2 /mnt/persist
+$ mount -o ro /dev/disk/by-partlabel/persist /mnt/persist
 $ mkdir -p /run/hotdogb-hexagonfs/sensors/registry
 $ cp -a /mnt/persist/sensors/registry/registry/. /run/hotdogb-hexagonfs/sensors/registry/
+$ chmod -R a+rX /run/hotdogb-hexagonfs
 $ ln -s /sys/devices/soc0 /run/hotdogb-hexagonfs/socinfo
-$ systemctl start hotdogb-radio            # SLPI 起来，出现 /dev/fastrpc-sdsp
-$ /usr/local/sbin/hexagonrpcd -f /dev/fastrpc-sdsp -d adsp -R /run/hotdogb-hexagonfs
-Could not attach to FastRPC node: Broken pipe      # ← 当前卡点
-$ tail -6 <(dmesg)
+$ systemctl start hotdogb-radio                     # SLPI 起来，出现 /dev/fastrpc-sdsp
+$ /usr/local/sbin/hexagonrpcd -f /dev/fastrpc-sdsp -d adsp -s -R /run/hotdogb-hexagonfs
+$ gdbus call --system -d net.hadess.SensorProxy -o /net/hadess/SensorProxy \
+      -m org.freedesktop.DBus.Properties.GetAll net.hadess.SensorProxy
 ```
+
+`GetAll` 里应出现 `HasAccelerometer=true`、`HasLightSensor=true`；`monitor-sensor --accel`
+会打印倾角。

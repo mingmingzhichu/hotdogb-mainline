@@ -1,0 +1,86 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: mingmingzhichu <lihaoyu0717@outlook.com>
+Date: Sat, 21 Nov 2026 10:05:00 +0800
+Subject: [PATCH] arm64: dts: qcom: sm8150: fix the SLPI FastRPC node
+
+The sensor PD on the SLPI reads its registry back from the application
+processor through a FastRPC reverse tunnel, and on hotdogb every attach
+(INIT_ATTACH and INIT_ATTACH_SNS alike) kills the DSP:
+
+  arm-smmu 15000000.iommu: Unhandled context fault: fsr=0x402,
+                           iova=0x1fffff000, cbfrsynra=0x5a1
+  qcom_q6v5_pas 2400000.remoteproc: fatal error received:
+                           EX:sensor_process:0x1:frpck_0_0:0x5b
+
+The only upstream SLPI with a working sensor stack is sdm845, and its
+fastrpc node has a shape this one does not: one compute context bank with
+no iommus at all, a qcom,vmids list, and a 16 MiB shared-dma-pool the
+driver hands to the DSP through a hypervisor call.  The sensor process is
+hypervisor-bypassed on the SMMU and works with physical addresses, which is
+why the pool alone is not enough.
+
+sm8150 instead attaches three translated context banks (0x5a1-0x5a3) to the
+same stream IDs, so the DSP's first access lands in a page table it was
+never meant to see and faults.  Mirror sdm845: publish a single
+compute-cb@0 without iommus, list the VMIDs the pool has to be assigned to,
+and give the node the pool itself.  The pool is 16 MiB, 4 MiB aligned and
+reusable, matching downstream's adsp_region.
+
+Without the pool the driver has nothing to hand over; without qcom,vmids
+qcom_scm_assign_mem() has no destination and fails with -EINVAL, which is
+fatal for the sdsp domain.
+
+Signed-off-by: mingmingzhichu <lihaoyu0717@outlook.com>
+---
+ arch/arm64/boot/dts/qcom/sm8150.dtsi | 29 +++++++++++++----------------
+ 1 file changed, 13 insertions(+), 16 deletions(-)
+
+--- a/arch/arm64/boot/dts/qcom/sm8150.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8150.dtsi
+@@ -688,6 +688,14 @@
+ 		#size-cells = <2>;
+ 		ranges;
+ 
++		fastrpc_mem: fastrpc-mem {
++			compatible = "shared-dma-pool";
++			alloc-ranges = <0x0 0x0 0x0 0xffffffff>;
++			alignment = <0x0 0x400000>;
++			size = <0x0 0x1000000>;
++			reusable;
++		};
++
+ 		hyp_mem: memory@85700000 {
+ 			reg = <0x0 0x85700000 0x0 0x600000>;
+ 			no-map;
+@@ -2220,26 +2228,15 @@
+ 					qcom,glink-channels = "fastrpcglink-apps-dsp";
+ 					label = "sdsp";
+ 					qcom,non-secure-domain;
++					qcom,vmids = <QCOM_SCM_VMID_HLOS QCOM_SCM_VMID_MSS_MSA
++						      QCOM_SCM_VMID_SSC_Q6 QCOM_SCM_VMID_ADSP_Q6>;
++					memory-region = <&fastrpc_mem>;
+ 					#address-cells = <1>;
+ 					#size-cells = <0>;
+ 
+-					compute-cb@1 {
+-						compatible = "qcom,fastrpc-compute-cb";
+-						reg = <1>;
+-						iommus = <&apps_smmu 0x05a1 0x0>;
+-					};
+-
+-					compute-cb@2 {
+-						compatible = "qcom,fastrpc-compute-cb";
+-						reg = <2>;
+-						iommus = <&apps_smmu 0x05a2 0x0>;
+-					};
+-
+-					compute-cb@3 {
++					compute-cb@0 {
+ 						compatible = "qcom,fastrpc-compute-cb";
+-						reg = <3>;
+-						iommus = <&apps_smmu 0x05a3 0x0>;
+-						/* note: shared-cb = <4> in downstream */
++						reg = <0>;
+ 					};
+ 				};
+ 			};
