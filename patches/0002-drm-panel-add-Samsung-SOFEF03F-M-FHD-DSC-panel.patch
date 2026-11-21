@@ -9,14 +9,14 @@ verbatim from the vendor device tree node.
 
 The backlight is driven through DCS 0x51 with the big-endian ("Samsung")
 byte order, i.e. the vendor's qcom,mdss-bl-high2bit.  In normal mode the
-register is 10 bits wide (0..1023).  The vendor driver encodes HBM as
-"level + 1023", so writing 1024..2046 without switching the panel to the
-high-brightness gamma first wraps around and makes the screen go dark;
-clamp to 1023 and start at half scale.  Levels 1..5 flicker, so clamp
-them up to 6 while leaving 0 alone for userspace.  The top of the range
-switches to the vendor's high-brightness gamma with the sequence from
-qcom,mdss-dsi-panel-hbm-brightness-on-command, and leaving it turns that
-off again.
+register is 10 bits wide (0..1023) and the panel starts at half scale.
+High brightness mode is a separate gamma, selected with the sequence from
+qcom,mdss-dsi-panel-hbm-brightness-on-command; once it is active 0x51
+carries the vendor's "level + 1023" encoding, i.e. 1024..2046.  Leaving
+HBM sends the matching off sequence first.  So the top of the range is a
+real jump instead of one more linear step, and values below it never enter
+the HBM window.  Levels 1..5 flicker, so clamp them up to 6 while leaving
+0 alone for userspace.
 
 The panel runs at 90 Hz, the vendor's default timing, in a single fixed
 mode.
@@ -36,15 +36,15 @@ Signed-off-by: mingmingzhichu <lihaoyu0717@outlook.com>
 ---
  drivers/gpu/drm/panel/Kconfig                 |  12 +
  drivers/gpu/drm/panel/Makefile                |   1 +
- .../gpu/drm/panel/panel-samsung-sofef03f.c    | 667 ++++++++++++++++++
- 3 files changed, 680 insertions(+)
+ .../gpu/drm/panel/panel-samsung-sofef03f.c    | 680 +++++++++++++++++++
+ 3 files changed, 693 insertions(+)
  create mode 100644 drivers/gpu/drm/panel/panel-samsung-sofef03f.c
 
 diff --git a/drivers/gpu/drm/panel/Kconfig b/drivers/gpu/drm/panel/Kconfig
-index 5a582ecc2..ddf2be128 100644
+index cbdf7b8..0696fc8 100644
 --- a/drivers/gpu/drm/panel/Kconfig
 +++ b/drivers/gpu/drm/panel/Kconfig
-@@ -941,6 +941,18 @@ config DRM_PANEL_SAMSUNG_SOFEF00
+@@ -1108,6 +1108,18 @@ config DRM_PANEL_SAMSUNG_SOFEF00
  
  	    Samsung AMS628NW01 (found in OnePlus 6, 1080x2280@60Hz)
  
@@ -64,12 +64,12 @@ index 5a582ecc2..ddf2be128 100644
  	tristate "Seiko 43WVF1G panel"
  	depends on OF
 diff --git a/drivers/gpu/drm/panel/Makefile b/drivers/gpu/drm/panel/Makefile
-index e96f089f7..ee6eeeca5 100644
+index 3b523cf..80254b6 100644
 --- a/drivers/gpu/drm/panel/Makefile
 +++ b/drivers/gpu/drm/panel/Makefile
-@@ -95,6 +95,7 @@ obj-$(CONFIG_DRM_PANEL_SAMSUNG_S6E88A0_AMS452EF01) += panel-samsung-s6e88a0-ams4
- obj-$(CONFIG_DRM_PANEL_SAMSUNG_S6E8AA0) += panel-samsung-s6e8aa0.o
+@@ -109,6 +109,7 @@ obj-$(CONFIG_DRM_PANEL_SAMSUNG_S6E8AA0) += panel-samsung-s6e8aa0.o
  obj-$(CONFIG_DRM_PANEL_SAMSUNG_S6E8AA5X01_AMS561RA01) += panel-samsung-s6e8aa5x01-ams561ra01.o
+ obj-$(CONFIG_DRM_PANEL_SAMSUNG_S6E8FC0) += panel-samsung-s6e8fc0-m1906f9.o
  obj-$(CONFIG_DRM_PANEL_SAMSUNG_SOFEF00) += panel-samsung-sofef00.o
 +obj-$(CONFIG_DRM_PANEL_SAMSUNG_SOFEF03F) += panel-samsung-sofef03f.o
  obj-$(CONFIG_DRM_PANEL_SEIKO_43WVF1G) += panel-seiko-43wvf1g.o
@@ -77,10 +77,10 @@ index e96f089f7..ee6eeeca5 100644
  obj-$(CONFIG_DRM_PANEL_SHARP_LQ101R1SX01) += panel-sharp-lq101r1sx01.o
 diff --git a/drivers/gpu/drm/panel/panel-samsung-sofef03f.c b/drivers/gpu/drm/panel/panel-samsung-sofef03f.c
 new file mode 100644
-index 0000000..73faf7d
+index 0000000..ccd45bb
 --- /dev/null
 +++ b/drivers/gpu/drm/panel/panel-samsung-sofef03f.c
-@@ -0,0 +1,667 @@
+@@ -0,0 +1,680 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Samsung SOFEF03F M FHD panel driver
@@ -113,11 +113,17 @@ index 0000000..73faf7d
 + * 2046 are the vendor's HBM encoding ("level + 1023") and are only valid
 + * after the panel has been switched to its high-brightness gamma with
 + * 0x53 0xe0.  Writing them in normal mode wraps the brightness around, so
-+ * keep the range at 1023; hitting the top switches to HBM instead.
++ * keep the range at 1023 and leave HBM to a future change.
 + */
 +#define SOFEF03F_MAX_BRIGHTNESS		1023
 +#define SOFEF03F_MIN_BRIGHTNESS		6
 +#define SOFEF03F_DEFAULT_BRIGHTNESS	512
++
++/*
++ * Once the HBM gamma is selected the panel expects 0x51 in 1023..2046, i.e.
++ * the vendor's "level + 1023" encoding (dsi_panel_set_hbm_brightness()).
++ */
++#define SOFEF03F_HBM_OFFSET		1023
 +
 +/* vendor qcom,esd-check-enabled: LP read of 0x0a, expect 0x9c */
 +#define SOFEF03F_ESD_PERIOD_MS		2000
@@ -386,6 +392,7 @@ index 0000000..73faf7d
 +
 +static int sofef03f_set_brightness(struct sofef03f *ctx, u16 brightness)
 +{
++	u16 value;
 +	int ret = 0;
 +
 +	/*
@@ -393,7 +400,9 @@ index 0000000..73faf7d
 +	 * Samsung variant of 0x51, which is what ..._large() already does.
 +	 * Levels below 6 flicker, so clamp them up; 0 stays 0 so userspace can
 +	 * still blank the panel.  The top of the range switches the panel to
-+	 * its high-brightness gamma, like Android does at full brightness.
++	 * its high-brightness gamma, like Android does at full brightness; in
++	 * that mode 0x51 carries the vendor's 1023..2046 HBM range, so the
++	 * top step is a real jump instead of one more linear step.
 +	 */
 +	if (brightness > SOFEF03F_MAX_BRIGHTNESS)
 +		brightness = SOFEF03F_MAX_BRIGHTNESS;
@@ -416,7 +425,11 @@ index 0000000..73faf7d
 +		ctx->hbm = false;
 +	}
 +
-+	ret = mipi_dsi_dcs_set_display_brightness_large(ctx->dsi, brightness);
++	value = brightness;
++	if (ctx->hbm)
++		value += SOFEF03F_HBM_OFFSET;
++
++	ret = mipi_dsi_dcs_set_display_brightness_large(ctx->dsi, value);
 +
 +out:
 +	ctx->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
@@ -750,4 +763,3 @@ index 0000000..73faf7d
 +MODULE_LICENSE("GPL");
 -- 
 2.47.3
-
