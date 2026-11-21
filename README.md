@@ -210,8 +210,27 @@ $ /bin/qrtr-lookup | grep -i sensor
       400       1        0    9    13 Snapdragon Sensor Core service
 ```
 
-还差用户态 QMI SSC 客户端（Debian 里是 `libssc` + `iio-sensor-proxy`）。
-详见 [`docs/evidence/2026-11-04-sensors-slpi.md`](docs/evidence/2026-11-04-sensors-slpi.md)。
+还差用户态：`libssc` + `iio-sensor-proxy`（CI 交叉编译，已进镜像），以及 **`hexagonrpcd`**。
+SSC 的传感器 PD 启动时通过 FastRPC 反向隧道向主处理器要 `persist` 里的传感器注册表和
+`/vendor/etc/sensors/config` 的板级配置；没有这个服务端，注册表是空的，libssc 的 SUID
+查询（`msg_id 768`、伪 UID `0xABABABAB…`）返回 0 个传感器，`iio-sensor-proxy` 打印
+`'registry' sensor unavailable, retrying... (10/10)` 后退出。
+
+镜像里已有 `hotdogb-sensors.service` + `hotdogb-sensors.sh`：从 `persist` 分区取注册表 →
+搭 HexagonFS → 起 `hexagonrpcd` → 重启 `iio-sensor-proxy`。但**默认关闭**：
+
+```
+$ touch /etc/hotdogb-sensors.enable
+$ systemctl start hotdogb-sensors
+```
+
+原因是 sm8150 的 FastRPC 目前还 attach 不上：`INIT_ATTACH` 和 `INIT_ATTACH_SNS` 都会让
+SLPI 固件报 `EX:kernel:0x0:frpck_0_0`，同时 `apps_smmu` 在 SLPI fastrpc 的 compute-cb
+（`cbfrsynra=0x5a1`）上触发 context fault，remoteproc 随后重启 DSP。上游 `sm8150.dtsi`
+的 fastrpc 节点没有 `memory-region`，而 sdm845 上能用的 cdsp 节点有 `fastrpc_mem`
+（`shared-dma-pool`）——这是下一步要补的内核工作。
+详见 [`docs/evidence/2026-11-21-fastrpc-sns-attach.md`](docs/evidence/2026-11-21-fastrpc-sns-attach.md)
+和 [`docs/evidence/2026-11-04-sensors-slpi.md`](docs/evidence/2026-11-04-sensors-slpi.md)。
 
 GPS 同理：MPSS 起来后 QRTR 上已经有 Location service（QMI 16），差 `gnss-share` 这样的客户端。
 

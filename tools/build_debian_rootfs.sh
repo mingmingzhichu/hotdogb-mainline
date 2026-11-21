@@ -296,6 +296,10 @@ if [ -d "$LOCAL_FIRMWARE" ]; then
 		# come from the Debian packages installed above.
 		install -m 0755 "$USERSPACE_TOOLS/sbin/pd-mapper" \
 			"$ROOT/usr/local/sbin/pd-mapper"
+		# hexagonrpcd serves the sensor registry to the SLPI: it is what
+		# turns an empty SSC registry into an enumerable sensor list.
+		install -m 0755 "$USERSPACE_TOOLS/sbin/hexagonrpcd" \
+			"$ROOT/usr/local/sbin/hexagonrpcd"
 		# libssc + SSC-enabled iio-sensor-proxy (sensor data via SLPI).
 		[ -d "$USERSPACE_TOOLS/lib" ] && \
 			cp -a "$USERSPACE_TOOLS/lib"/. "$ROOT/usr/lib/aarch64-linux-gnu/"
@@ -312,6 +316,12 @@ if [ -d "$LOCAL_FIRMWARE" ]; then
 		"$ROOT/usr/local/sbin/hotdogb-radio.sh"
 	install -m 0644 "$SCRIPT_DIR/hotdogb-radio.service" \
 		"$ROOT/etc/systemd/system/hotdogb-radio.service"
+	# The SSC sensor stack needs a FastRPC file server (hexagonrpcd) plus the
+	# per-device registry from the persist partition; see hotdogb-sensors.sh.
+	install -m 0755 "$SCRIPT_DIR/hotdogb-sensors.sh" \
+		"$ROOT/usr/local/sbin/hotdogb-sensors.sh"
+	install -m 0644 "$SCRIPT_DIR/hotdogb-sensors.service" \
+		"$ROOT/etc/systemd/system/hotdogb-sensors.service"
 	# ath10k_snoc talks to the WLAN firmware through the QMI service that SLPI
 	# provides and pd-mapper advertises.  Loading it at boot, before that chain
 	# exists, panics the kernel at probe time, so keep udev from autoloading it;

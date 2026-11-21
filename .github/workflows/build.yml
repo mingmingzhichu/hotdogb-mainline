@@ -245,6 +245,9 @@ jobs:
                    usr/local/sbin/hotdogb-radio.sh \
                    usr/local/sbin/hotdogb-gps-setup \
                    usr/local/sbin/pd-mapper \
+                   usr/local/sbin/hexagonrpcd \
+                   usr/local/sbin/hotdogb-sensors.sh \
+                   etc/systemd/system/hotdogb-sensors.service \
                    usr/bin/iio-sensor-proxy \
                    usr/bin/gnss-share \
                    etc/gnss-share.conf \
@@ -261,7 +264,7 @@ jobs:
           # (libprotobuf-c.so.1 for libssc) only shows up when the daemon starts,
           # so resolve every NEEDED entry against the image here.
           for f in usr/bin/iio-sensor-proxy usr/lib/aarch64-linux-gnu/libssc.so.1 \
-                   usr/local/sbin/pd-mapper; do
+                   usr/local/sbin/pd-mapper usr/local/sbin/hexagonrpcd; do
             for lib in $(readelf -d "/mnt/hotdogb-root/$f" |
                          sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p'); do
               sudo find /mnt/hotdogb-root/usr/lib /mnt/hotdogb-root/lib -name "$lib" |

@@ -133,9 +133,15 @@ echo start > /sys/class/remoteproc/remoteprocX/state   # slpi
 iio-sensor-proxy &
 ```
 
-`iio-sensor-proxy` 已装，但它需要 `libssc` 才能跟 SSC 通信；没有 libssc 时
-`/sys/bus/iio` 里不会出现手机传感器。`libssc` 可以从 pmOS/Ubuntu 的源码编译，
-装好后传感器会通过 IIO 暴露给 `iio-sensor-proxy`。
+`iio-sensor-proxy` 和它依赖的 `libssc` 都由 CI 交叉编译进镜像（见
+`tools/build-userspace.sh`）。但光有客户端还不够：SSC 的传感器 PD 是通过 FastRPC 反向
+隧道向主处理器读注册表的，镜像里另外带了 `hexagonrpcd` 和 `hotdogb-sensors.service`
+（从 `persist` 分区取注册表 → 起服务 → 重启 `iio-sensor-proxy`）。
+
+当前 sm8150 的 FastRPC 还 attach 不上：`INIT_ATTACH` / `INIT_ATTACH_SNS` 都会让 SLPI
+报 `EX:kernel:frpck_0_0` 并触发 SMMU context fault，所以服务默认关闭，需要
+`touch /etc/hotdogb-sensors.enable` 才允许启动。细节和下一步（DTS 里的 `fastrpc_mem`
+carveout）见 `docs/evidence/2026-11-21-fastrpc-sns-attach.md`。
 
 ## 音频
 

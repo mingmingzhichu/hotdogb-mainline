@@ -1,0 +1,31 @@
+[Unit]
+Description=OnePlus 7T (hotdogb) SSC sensor stack (hexagonrpcd + registry)
+Documentation=file:/usr/share/doc/hotdogb-radio
+# The sensor PD runs on the SLPI, so the radio service has to bring SLPI up
+# first; hexagonrpcd can only attach afterwards.  Attaching is what starts the
+# PD and makes it read the sensor registry, so iio-sensor-proxy must not talk
+# to the SSC before this unit has run (the start script restarts it).
+#
+# OPT-IN AND CURRENTLY EXPERIMENTAL.  On sm8150 the FastRPC reverse tunnel does
+# not attach: both INIT_ATTACH and INIT_ATTACH_SNS fault the SLPI firmware
+# (qcom_q6v5_pas: fatal error received: EX:kernel:frpck_0_0) together with an
+# SMMU context fault on the compute-cb that belongs to the SLPI fastrpc node,
+# and remoteproc then recovers the DSP.  Until fastrpc works on this SoC the
+# unit must never run unattended, hence the flag file:
+#
+#     touch /etc/hotdogb-sensors.enable && systemctl start hotdogb-sensors
+#
+# Requires= still pulls the radio chain in on demand, so nothing starts at boot.
+ConditionPathExists=/etc/hotdogb-sensors.enable
+Requires=hotdogb-radio.service
+After=hotdogb-radio.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/hotdogb-sensors.sh start
+ExecStop=/usr/local/sbin/hotdogb-sensors.sh stop
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
