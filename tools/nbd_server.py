@@ -17,6 +17,7 @@ import os
 import socket
 import struct
 import sys
+import time
 
 NBDMAGIC = b"NBDMAGIC"
 IHAVEOPT = b"IHAVEOPT"
@@ -40,6 +41,9 @@ NBD_CMD_TRIM = 4
 EINVAL = 22
 EIO = 5
 
+# Chunk size for outgoing read replies, see send_reply().
+SEND_CHUNK = 64 * 1024
+
 
 def log(msg):
     print("nbd: " + msg, file=sys.stderr, flush=True)
@@ -56,10 +60,15 @@ def recv_exact(sock, size):
 
 
 def send_reply(sock, error, handle, payload=b""):
-    sock.sendall(struct.pack(">IIQ", NBD_REPLY_MAGIC, error, handle) + payload)
+    sock.sendall(struct.pack(">IIQ", NBD_REPLY_MAGIC, error, handle))
+    # Hand large reads to the kernel in smaller pieces: a single multi-hundred
+    # KB sendall can stall long enough on a CDC-NCM link for the peer's USB
+    # stack to reset the connection mid-boot.
+    for start in range(0, len(payload), SEND_CHUNK):
+        sock.sendall(payload[start:start + SEND_CHUNK])
 
 
-def serve_client(conn, image, size, read_only, verbose=False):
+def serve_client(conn, image, size, read_only, verbose=False, throttle_kbps=0):
     conn.sendall(NBDMAGIC + IHAVEOPT + struct.pack(">H", 1))
     recv_exact(conn, 4)  # client flags
 
@@ -82,6 +91,9 @@ def serve_client(conn, image, size, read_only, verbose=False):
     log("client attached%s" % (" (read-only)" if read_only else ""))
 
     count = 0
+    throttle_bps = throttle_kbps * 1024
+    sent = 0
+    started = time.monotonic()
     recent = collections.deque(maxlen=20)
     try:
         while True:
@@ -103,6 +115,11 @@ def serve_client(conn, image, size, read_only, verbose=False):
                     continue
                 image.seek(offset)
                 send_reply(conn, 0, handle, image.read(length))
+                if throttle_bps:
+                    sent += length
+                    lag = sent / throttle_bps - (time.monotonic() - started)
+                    if lag > 0:
+                        time.sleep(lag)
             elif cmd == NBD_CMD_WRITE:
                 data = recv_exact(conn, length)
                 if read_only or offset + length > size:
@@ -133,6 +150,13 @@ def main():
     parser.add_argument("--bind", default="0.0.0.0", help="address to listen on")
     parser.add_argument("--port", type=int, default=9999, help="TCP port")
     parser.add_argument("--read-only", action="store_true", help="refuse writes")
+    parser.add_argument(
+        "--throttle-kbps",
+        type=int,
+        default=0,
+        help="cap read throughput in KiB/s (0 = unlimited); a steady "
+             "stream is gentler on the USB gadget than a burst",
+    )
     parser.add_argument("--verbose", action="store_true", help="log NBD requests")
     args = parser.parse_args()
 
@@ -150,7 +174,8 @@ def main():
         log("connection from %s:%d" % peer)
         with open(args.image, mode) as image:
             try:
-                serve_client(conn, image, size, args.read_only, args.verbose)
+                serve_client(conn, image, size, args.read_only, args.verbose,
+                             args.throttle_kbps)
             except (ConnectionError, OSError) as err:
                 log("client error: %s" % err)
             finally:
