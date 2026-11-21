@@ -312,6 +312,16 @@ if [ -d "$LOCAL_FIRMWARE" ]; then
 		"$ROOT/usr/local/sbin/hotdogb-radio.sh"
 	install -m 0644 "$SCRIPT_DIR/hotdogb-radio.service" \
 		"$ROOT/etc/systemd/system/hotdogb-radio.service"
+	# ath10k_snoc talks to the WLAN firmware through the QMI service that SLPI
+	# provides and pd-mapper advertises.  Loading it at boot, before that chain
+	# exists, panics the kernel at probe time, so keep udev from autoloading it;
+	# hotdogb-radio.sh runs modprobe itself once SLPI + pd-mapper are up
+	# ('blacklist' does not block an explicit modprobe).
+	mkdir -p "$ROOT/etc/modprobe.d"
+	cat > "$ROOT/etc/modprobe.d/hotdogb-ath10k.conf" <<'EOF'
+blacklist ath10k_snoc
+EOF
+	chmod 644 "$ROOT/etc/modprobe.d/hotdogb-ath10k.conf"
 	echo "installed hotdogb-radio (manual start) + userspace tools"
 elif [ -n "${HOTDOGB_FIRMWARE_BACKUP:-}" ]; then
 	echo "firmware backup not found: $FIRMWARE_BACKUP" >&2

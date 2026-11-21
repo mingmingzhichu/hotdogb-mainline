@@ -247,7 +247,8 @@ jobs:
                    usr/local/sbin/pd-mapper \
                    usr/bin/iio-sensor-proxy \
                    usr/bin/gnss-share \
-                   etc/gnss-share.conf; do
+                   etc/gnss-share.conf \
+                   etc/modprobe.d/hotdogb-ath10k.conf; do
             sudo test -e "/mnt/hotdogb-root/$f" || { echo "missing /$f"; exit 1; }
           done
           # The SSC sensor stack must ship its udev rules and libssc driver.
