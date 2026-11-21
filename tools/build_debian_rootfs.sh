@@ -63,7 +63,10 @@ apt-get install -y --no-install-recommends \
 	libegl-mesa0 libgles2 libgbm1 \
 	wpasupplicant iw wireless-regdb firmware-atheros \
 	alsa-ucm-conf alsa-utils \
-	iio-sensor-proxy \
+	# libprotobuf-c1 is a runtime dependency of the cross-built libssc: nothing
+	# else in the image pulls it in, and without it iio-sensor-proxy exits
+	# immediately with "libprotobuf-c.so.1: cannot open shared object file".
+	iio-sensor-proxy libprotobuf-c1 \
 	modemmanager gnss-share libqmi-utils geoclue-2.0 \
 	locales fonts-noto-cjk fonts-noto-color-emoji \
 	ibus ibus-libpinyin ibus-gtk3 ibus-gtk4 \

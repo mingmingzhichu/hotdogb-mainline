@@ -215,7 +215,7 @@ jobs:
       - name: Install the rootfs integration tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends kmod xz-utils
+          sudo apt-get install -y --no-install-recommends kmod xz-utils binutils
 
       - name: Add kernel modules and verify the rootfs
         run: |
@@ -255,6 +255,18 @@ jobs:
             echo "missing libssc"; exit 1; }
           sudo find /mnt/hotdogb-root/usr/lib/udev/rules.d -name '*ssc*.rules' | grep -q . || {
             echo "missing SSC udev rules"; exit 1; }
+          # Existence is not enough: the cross-built helpers link against arm64
+          # libraries that only the CI build container had.  A missing soname
+          # (libprotobuf-c.so.1 for libssc) only shows up when the daemon starts,
+          # so resolve every NEEDED entry against the image here.
+          for f in usr/bin/iio-sensor-proxy usr/lib/aarch64-linux-gnu/libssc.so.1 \
+                   usr/local/sbin/pd-mapper; do
+            for lib in $(readelf -d "/mnt/hotdogb-root/$f" |
+                         sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p'); do
+              sudo find /mnt/hotdogb-root/usr/lib /mnt/hotdogb-root/lib -name "$lib" |
+                grep -q . || { echo "missing runtime library $lib (needed by /$f)"; exit 1; }
+            done
+          done
           sudo test -f /mnt/hotdogb-root/etc/locale.conf
           sudo test -f /mnt/hotdogb-root/etc/xdg/autostart/ibus-daemon.desktop
           sudo grep -q '^mmzc:' /mnt/hotdogb-root/etc/passwd
