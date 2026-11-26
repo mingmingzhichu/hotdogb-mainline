@@ -281,6 +281,41 @@ if [ -d "$LOCAL_FIRMWARE" ]; then
 	install -m 0644 "$LOCAL_FIRMWARE/bdwlan.bin" "$ATH10K_FW/board.bin"
 	echo "included local OnePlus 7T modem, WLAN, SLPI and ADSP firmware"
 
+	# The three userspace services MPSS needs all consume device-specific data
+	# that used to be copied off the UFS partitions at runtime (initramfs
+	# /init).  Bake it into the rootfs instead so the netboot path does not
+	# depend on by-partlabel links or a persist mount:
+	#   tqftpserv -> /var/lib/tqftpserv   (wlan_mac.bin, bdwlan.bin, wlan/*)
+	#   rmtfs     -> /var/lib/hotdogb/rmtfs (EFS partitions, -o directory mode)
+	# Sources are dumped once from the device and kept git-ignored here.
+	DATA_DIR="$FIRMWARE_BACKUP"
+	[ -d "$DATA_DIR/persist-wlan" ] && \
+		install -d "$ROOT/var/lib/tqftpserv" && \
+		cp -a "$DATA_DIR/persist-wlan"/. "$ROOT/var/lib/tqftpserv/" && \
+		chmod -R a+rX "$ROOT/var/lib/tqftpserv"
+	if [ -d "$DATA_DIR/rmtfs-efs" ]; then
+		install -d "$ROOT/var/lib/hotdogb/rmtfs"
+		# rmtfs -o expects these exact names (the /init mapping).
+		for pair in "modemst1:modem_fs1" "modemst2:modem_fs2" \
+			    "fsg:modem_fsg" "fsc:modem_fsc"; do
+			src=${pair%%:*}; dst=${pair##*:}
+			[ -f "$DATA_DIR/rmtfs-efs/$src.img" ] || {
+				echo "missing EFS dump: $DATA_DIR/rmtfs-efs/$src.img" >&2
+				exit 1
+			}
+			install -m 0644 "$DATA_DIR/rmtfs-efs/$src.img" \
+				"$ROOT/var/lib/hotdogb/rmtfs/$dst"
+		done
+	fi
+	# ath10k probes board-2.bin before board.bin.  The Debian firmware-atheros
+	# copy is a generic image that fails with "invalid length for board ie_id
+	# 0"; ship the one verified on this handset instead.
+	if [ -f "$DATA_DIR/wifi-board/board-2.bin" ]; then
+		install -m 0644 "$DATA_DIR/wifi-board/board-2.bin" \
+			"$ATH10K_FW/board-2.bin"
+	fi
+	echo "baked tqftpserv readwrite data + rmtfs EFS + board-2.bin into rootfs"
+
 	# Radio service chain.  The initramfs radio section is skipped under
 	# hotdogb.netboot=1, so on a netbooted Debian nothing starts MPSS unless
 	# hotdogb-radio.service is started explicitly.  The Debian packages rmtfs

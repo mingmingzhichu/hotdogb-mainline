@@ -9,8 +9,9 @@
 # without rmtfs (EFS), pd-mapper (protection domains) and tqftpserv (firmware
 # download).  See docs/userspace.md.  Do NOT use qcom,msa-fixed-perm.
 #
-# Usage: hotdogb-radio.sh [start|stop|status]
+# Usage: hotdogb-radio.sh [start|slpi|stop|status]
 #   start  - bring up the service chain, then MPSS and the ath10k stack
+#   slpi   - start only SLPI + pd-mapper (what the SSC sensor stack needs)
 #   stop   - stop MPSS and the services
 #   status - print the state of each piece
 set -u
@@ -57,6 +58,31 @@ rproc_start() {
 	return 1
 }
 
+# SSC only: the sensor PD lives on the SLPI, so the sensor stack needs SLPI and
+# pd-mapper -- but not MPSS and definitely not ath10k_snoc.  Probing ath10k
+# before MPSS has published the WLFW service takes the WCN3990 down (SMMU
+# context fault, remoteproc recovery fails, SoC drops into EDL), and a sensor
+# test has no reason to reset the modem.  See
+# docs/evidence/2026-11-02-wifi-wcn3990.md.
+do_start_slpi() {
+	mkdir -p /run/hotdogb
+	SLPI=$(find_rproc slpi) || { say "slpi remoteproc not found"; return 1; }
+	[ -f "$FW/slpi.mdt" ] || { say "slpi.mdt missing in $FW"; return 1; }
+	if ! rproc_start "$SLPI"; then
+		say "slpi failed to start"
+		return 1
+	fi
+	say "slpi running"
+	if ! pgrep -x pd-mapper >/dev/null; then
+		if ls "$FW"/*.jsn >/dev/null 2>&1; then
+			/usr/local/sbin/pd-mapper >/run/hotdogb/pd-mapper.log 2>&1 &
+			say "pd-mapper started"
+		else
+			say "no *.jsn in $FW; pd-mapper would exit"
+		fi
+	fi
+}
+
 do_start() {
 	mkdir -p /run/hotdogb
 	[ -f "$FW/modem.mdt" ] || { say "modem.mdt missing in $FW"; return 1; }
@@ -67,13 +93,32 @@ do_start() {
 	# whole chip into EDL.  Verified on device 2026-11-20.
 	[ -f "$FW/slpi.mdt" ] || { say "slpi.mdt missing in $FW; refusing to start MPSS"; return 1; }
 
-	# 1. rmtfs (EFS).  Prefer the Debian package service: it runs with
-	#    `-r -P -s`, the flags needed here; starting our own copy would miss
-	#    them.  Fall back to the static binary only if the service is absent.
+	# 1. rmtfs (EFS).  The rootfs bakes the EFS partitions into
+	#    /var/lib/hotdogb/rmtfs, so use rmtfs' directory mode (-o) and never
+	#    rely on /dev/disk/by-partlabel (the netboot kernel's udev does not
+	#    create those links reliably).  Only when that baked data is absent
+	#    fall back to running the Debian service (-P finds partitions by GPT
+	#    label) or copying the partitions at runtime.
+	EFS_DIR=/var/lib/hotdogb/rmtfs
 	if ! pgrep -x rmtfs >/dev/null; then
-		if command -v systemctl >/dev/null && \
-		   systemctl start rmtfs >/dev/null 2>&1 && pgrep -x rmtfs >/dev/null; then
-			say "rmtfs started via systemd"
+		if [ -f "$EFS_DIR/modem_fs1" ]; then
+			# -o: baked EFS directory, -r: read-only.  No -s: that flag
+			# opens the mss rproc control fd and aborts if it is missing;
+			# it only syncs modem start/stop and is not needed for EFS.
+			if [ -x /usr/bin/rmtfs ]; then
+				/usr/bin/rmtfs -o "$EFS_DIR" -r \
+					>/run/hotdogb/rmtfs.log 2>&1 &
+			elif [ -x /usr/local/sbin/rmtfs ]; then
+				/usr/local/sbin/rmtfs -o "$EFS_DIR" -r \
+					>/run/hotdogb/rmtfs.log 2>&1 &
+			else
+				say "rmtfs binary missing - MPSS may assert"
+				return 1
+			fi
+			say "rmtfs started from baked EFS ($EFS_DIR)"
+		elif command -v systemctl >/dev/null && \
+		     systemctl start rmtfs >/dev/null 2>&1 && pgrep -x rmtfs >/dev/null; then
+			say "rmtfs started via systemd (-P)"
 		else
 			mkdir -p /run/hotdogb/rmtfs
 			for d in /sys/block/sd*/sd*; do
@@ -88,9 +133,12 @@ do_start() {
 				[ -b "/dev/${d##*/}" ] && \
 					dd if="/dev/${d##*/}" of="/run/hotdogb/rmtfs/$out" bs=1M 2>/dev/null
 			done
-			if [ -x /usr/local/sbin/rmtfs ]; then
-				/usr/local/sbin/rmtfs -r -P -s >/run/hotdogb/rmtfs.log 2>&1 &
-				say "rmtfs started via static binary"
+			if [ -x /usr/local/sbin/rmtfs ] || [ -x /usr/bin/rmtfs ]; then
+				RMTFS_BIN=/usr/local/sbin/rmtfs
+				[ -x "$RMTFS_BIN" ] || RMTFS_BIN=/usr/bin/rmtfs
+				"$RMTFS_BIN" -o /run/hotdogb/rmtfs -r \
+					>/run/hotdogb/rmtfs.log 2>&1 &
+				say "rmtfs started from runtime-copied EFS"
 			else
 				say "rmtfs service unavailable - MPSS may assert"
 				return 1
@@ -98,8 +146,14 @@ do_start() {
 		fi
 	fi
 
-	# 2. tqftpserv (firmware download).  Same: prefer the distro service.
+	# 2. tqftpserv (firmware download).  /var/lib/tqftpserv is baked into the
+	#    rootfs with this handset's wlan_mac.bin + calibration (persist dump),
+	#    which is what makes MPSS publish the WLFW QMI service ath10k waits on.
+	#    tqftpserv's mkdir() is not recursive, so the parent must exist.
 	mkdir -p /var/lib/tqftpserv
+	if [ ! -f /var/lib/tqftpserv/wlan_mac.bin ]; then
+		say "warning: /var/lib/tqftpserv has no wlan_mac.bin; WLFW may not appear"
+	fi
 	if ! pgrep -x tqftpserv >/dev/null; then
 		if command -v systemctl >/dev/null && \
 		   systemctl start tqftpserv >/dev/null 2>&1 && pgrep -x tqftpserv >/dev/null; then
@@ -182,7 +236,8 @@ do_status() {
 
 case "${1:-start}" in
 start) do_start ;;
+slpi) do_start_slpi ;;
 stop) do_stop ;;
 status) do_status ;;
-*) echo "usage: $0 [start|stop|status]"; exit 2 ;;
+*) echo "usage: $0 [start|slpi|stop|status]"; exit 2 ;;
 esac

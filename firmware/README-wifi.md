@@ -43,3 +43,19 @@ ath10k_snoc 18800000.wifi: failed to assign msa map permissions: -22
 本机备份中的 MPSS 是 `modem.mdt` + 分片，而不是经验证的单文件 `modem.mbn`。
 内核 DTS 已改为请求 `.mdt`；此格式尚待真机验证。Wi-Fi 启动还需要
 `rmtfs`、`pd-mapper`、`tqftpserv` 按顺序运行；仅把固件放进 rootfs 不会自动启动无线栈。
+
+## 预置的运行时数据（2026-11-26）
+
+三个服务要用的设备专用数据过去是运行时从 UFS 分区拷的，netboot 路径下
+`/dev/disk/by-partlabel` 不可靠、persist 也没挂，导致 MPSS 发布不了 WLFW
+服务、ath10k 一直等。现在把它们一次性 dump 出来打包进 rootfs：
+
+| 目录 | 来源 | rootfs 目标 |
+|---|---|---|
+| `firmware/persist-wlan/` | `persist` 的 `wlan_mac.bin`、`bdwlan.bin`、`wlan/*` | `/var/lib/tqftpserv/` |
+| `firmware/rmtfs-efs/` | `modemst1/2`、`fsg`、`fsc` 分区镜像 | `/var/lib/hotdogb/rmtfs/{modem_fs1,modem_fs2,modem_fsg,modem_fsc}` |
+| `firmware/wifi-board/board-2.bin` | 真机验证过的板级数据 | `ath10k/WCN3990/hw1.0/board-2.bin`（覆盖 Debian 通用包） |
+
+`hotdogb-radio.sh` 据此用 `rmtfs -o <dir> -r`（目录模式）而不是 systemd 的
+`-P`（按 GPT 标签找分区）。这些目录和 `firmware_mnt/` 一样随仓库分发，
+CI 构建也会把完整 Wi-Fi 数据打进 rootfs。

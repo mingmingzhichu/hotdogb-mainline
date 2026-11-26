@@ -254,6 +254,16 @@ jobs:
                    etc/modprobe.d/hotdogb-ath10k.conf; do
             sudo test -e "/mnt/hotdogb-root/$f" || { echo "missing /$f"; exit 1; }
           done
+          # The baked radio data is what lets MPSS publish WLFW: without the
+          # tqftpserv readwrite files or the EFS images ath10k waits forever.
+          for f in var/lib/tqftpserv/wlan_mac.bin \
+                   var/lib/tqftpserv/bdwlan.bin \
+                   var/lib/hotdogb/rmtfs/modem_fs1 \
+                   var/lib/hotdogb/rmtfs/modem_fs2 \
+                   var/lib/hotdogb/rmtfs/modem_fsg \
+                   var/lib/hotdogb/rmtfs/modem_fsc; do
+            sudo test -e "/mnt/hotdogb-root/$f" || { echo "missing /$f"; exit 1; }
+          done
           # The SSC sensor stack must ship its udev rules and libssc driver.
           sudo find /mnt/hotdogb-root/usr/lib -name 'libssc*.so*' | grep -q . || {
             echo "missing libssc"; exit 1; }
