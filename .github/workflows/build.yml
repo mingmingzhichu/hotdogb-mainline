@@ -246,6 +246,7 @@ jobs:
                    usr/local/sbin/hotdogb-radio.sh \
                    usr/local/sbin/hotdogb-gps-setup \
                    usr/local/sbin/pd-mapper \
+                   usr/local/sbin/qrtr-lookup \
                    usr/local/sbin/hexagonrpcd \
                    usr/local/sbin/hotdogb-sensors.sh \
                    etc/systemd/system/hotdogb-sensors.service \

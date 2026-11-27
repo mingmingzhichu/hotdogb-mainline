@@ -154,6 +154,12 @@ build_static() { # $1=dir  $2=binary  $3=extra CFLAGS  $4=extra LDLIBS
 gitclone https://github.com/andersson/pd-mapper.git pd-mapper
 build_static pd-mapper pd-mapper "" "-lqrtr -llzma"
 
+# qrtr-lookup lets hotdogb-radio.sh `wifi` wait for the WLFW service before
+# probing ath10k.  Without that gate the probe takes an SMMU fault and drops
+# the SoC into EDL (verified 2026-11-27).  The qrtr source tree is already
+# checked out above for libqrtr.a, so build the tool from it as well.
+build_static qrtr qrtr-lookup "" "-lqrtr"
+
 # --- hexagonrpcd (serves files to the SLPI over FastRPC) -------------------
 # The sensor PD on the SLPI reads its sensor registry and board config through
 # a FastRPC reverse tunnel.  Without a server on the AP side the registry stays

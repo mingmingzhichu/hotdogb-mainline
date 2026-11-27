@@ -9,11 +9,16 @@
 # without rmtfs (EFS), pd-mapper (protection domains) and tqftpserv (firmware
 # download).  See docs/userspace.md.  Do NOT use qcom,msa-fixed-perm.
 #
-# Usage: hotdogb-radio.sh [start|slpi|stop|status]
-#   start  - bring up the service chain, then MPSS and the ath10k stack
+# Usage: hotdogb-radio.sh [start|wifi|slpi|stop|status]
+#   start  - bring up rmtfs/tqftpserv/pd-mapper and MPSS (never probes ath10k)
+#   wifi   - probe ath10k_snoc, but only once MPSS publishes the WLFW service
 #   slpi   - start only SLPI + pd-mapper (what the SSC sensor stack needs)
 #   stop   - stop MPSS and the services
 #   status - print the state of each piece
+#
+# ath10k must NOT be probed from start: on a freshly booted MPSS the WCN3990
+# is not ready, the probe takes an SMMU context fault and drops the SoC into
+# EDL (verified 2026-11-27).  `wifi` waits for WLFW via qrtr-lookup first.
 set -u
 
 FW=/lib/firmware/qcom/sm8150/oneplus7
@@ -85,13 +90,17 @@ do_start_slpi() {
 
 do_start() {
 	mkdir -p /run/hotdogb
-	[ -f "$FW/modem.mdt" ] || { say "modem.mdt missing in $FW"; return 1; }
+	# The verified MPSS image is the single-file modem.mbn (the split
+	# modem.mdt + bXX crash-loops every ~40 s, verified 2026-11-27).
+	if [ -f "$FW/modem.mbn" ]; then
+		say "MPSS image: modem.mbn (verified)"
+	elif [ -f "$FW/modem.mdt" ]; then
+		say "warning: only split modem.mdt present - MPSS may crash-loop"
+	else
+		say "no modem firmware in $FW"
+		return 1
+	fi
 	MPSS=$(find_rproc mpss) || { say "mpss remoteproc not found"; return 1; }
-	SLPI=$(find_rproc slpi) || { say "slpi remoteproc not found; refusing to start MPSS"; return 1; }
-	# SLPI is a hard prerequisite for MPSS on this SoC: starting MPSS while
-	# SLPI is offline (so pd-mapper has no protection domains) resets the
-	# whole chip into EDL.  Verified on device 2026-11-20.
-	[ -f "$FW/slpi.mdt" ] || { say "slpi.mdt missing in $FW; refusing to start MPSS"; return 1; }
 
 	# 1. rmtfs (EFS).  The rootfs bakes the EFS partitions into
 	#    /var/lib/hotdogb/rmtfs, so use rmtfs' directory mode (-o) and never
@@ -169,15 +178,9 @@ do_start() {
 		fi
 	fi
 
-	# 3. SLPI must come up before pd-mapper can enumerate its PDs, and before
-	#    MPSS is touched.  A failure here aborts the whole sequence.
-	if ! rproc_start "$SLPI"; then
-		say "slpi failed to start - aborting, NOT starting MPSS"
-		return 1
-	fi
-	say "slpi running"
-
-	# 4. PD maps: pd-mapper needs the *.jsn files in the firmware dir.
+	# 3. PD maps: pd-mapper needs the *.jsn files in the firmware dir.  It
+	#    must be up before MPSS so WLFW can be published; keep going even if
+	#    SLPI is offline (MPSS itself does not depend on it - verified 2026-11-27).
 	if ! pgrep -x pd-mapper >/dev/null; then
 		if ls "$FW"/*.jsn >/dev/null 2>&1; then
 			/usr/local/sbin/pd-mapper >/run/hotdogb/pd-mapper.log 2>&1 &
@@ -189,16 +192,62 @@ do_start() {
 
 	sleep 2
 
-	# 5. Only now start MPSS.  Starting it before the services above is what
-	#    makes it assert and reset the whole SoC into EDL.
-	rproc_start "$MPSS" || { say "MPSS failed to start"; return 1; }
-	say "MPSS running"
+	# 4. MPSS.  With all three services above up it boots and stays running.
+	if [ "$(rproc_state "$MPSS")" = running ]; then
+		say "MPSS already running"
+	else
+		rproc_start "$MPSS" || { say "MPSS failed to start"; return 1; }
+		say "MPSS running"
+	fi
 
-	# 6. Wi-Fi modules (ath10k waits for the WLFW QMI service MPSS publishes).
-	#    CI runs depmod, so modprobe resolves dependencies; fall back to a
-	#    fixed-order insmod if modprobe is unavailable.
+	# Deliberately do NOT probe ath10k here.  MPSS has only just booted; the
+	# WLFW service appears a few seconds later.  Probing before then makes
+	# ath10k_snoc touch 18800000.wifi while the WLAN subsystem is unclaimed,
+	# an SMMU context fault resets the SoC into EDL.  Use `wifi` instead.
+	say "radio up; run '$0 wifi' to wait for WLFW and probe ath10k"
+}
+
+# Probe ath10k only once MPSS has published the WLFW QMI service.  The original
+# AEE/ath10k bring-up script used `qrtr-lookup | grep ATH` with a 30 s timeout
+# for exactly this reason.  Probing early resets the whole SoC into EDL.
+do_wifi() {
+	mkdir -p /run/hotdogb
+	MPSS=$(find_rproc mpss) || { say "mpss remoteproc not found"; return 1; }
+	if [ "$(rproc_state "$MPSS")" != running ]; then
+		say "MPSS is not running - run '$0 start' first"
+		return 1
+	fi
+	pgrep -x rmtfs >/dev/null || { say "rmtfs not running - run '$0 start' first"; return 1; }
+	pgrep -x tqftpserv >/dev/null || { say "tqftpserv not running - run '$0 start' first"; return 1; }
+	pgrep -x pd-mapper >/dev/null || say "warning: pd-mapper not running"
+
+	# Wait for the WLFW service.  qrtr-lookup lives in the qrtr-tools package;
+	# if it is missing, fall back to a fixed grace period but say so loudly.
+	if command -v qrtr-lookup >/dev/null 2>&1; then
+		n=0
+		while [ $n -lt 30 ]; do
+			if qrtr-lookup 2>/dev/null | grep -qiE 'ATH10k|WLFW'; then
+				say "WLFW service present after ${n}s"
+				break
+			fi
+			n=$((n + 1))
+			sleep 1
+		done
+		if [ $n -ge 30 ]; then
+			say "WLFW did not appear in 30s - refusing to probe ath10k (would crash SoC)"
+			return 1
+		fi
+	else
+		say "warning: qrtr-lookup missing - waiting 20s for WLFW blindly"
+		sleep 20
+	fi
+
+	if lsmod 2>/dev/null | grep -q '^ath10k_snoc'; then
+		say "ath10k_snoc already loaded"
+		return 0
+	fi
 	if command -v modprobe >/dev/null 2>&1; then
-		modprobe ath10k_snoc 2>/dev/null || say "modprobe ath10k_snoc failed"
+		modprobe ath10k_snoc 2>/dev/null || { say "modprobe ath10k_snoc failed"; return 1; }
 	else
 		for m in cfg80211 mac80211 ath ath10k_core; do
 			[ -f "$MODDIR/$m.ko" ] && insmod "$MODDIR/$m.ko" 2>/dev/null
@@ -207,9 +256,7 @@ do_start() {
 	fi
 	[ -d /sys/module/ath10k_core ] && \
 		echo 3145760 > /sys/module/ath10k_core/parameters/debug_mask 2>/dev/null
-
-	sleep 5
-	say "done: $(ls /sys/class/net 2>/dev/null | tr '\n' ' ')"
+	say "ath10k probed; interfaces: $(ls /sys/class/net 2>/dev/null | tr '\n' ' ')"
 }
 
 do_stop() {
@@ -236,8 +283,9 @@ do_status() {
 
 case "${1:-start}" in
 start) do_start ;;
+wifi) do_wifi ;;
 slpi) do_start_slpi ;;
 stop) do_stop ;;
 status) do_status ;;
-*) echo "usage: $0 [start|slpi|stop|status]"; exit 2 ;;
+*) echo "usage: $0 [start|wifi|slpi|stop|status]"; exit 2 ;;
 esac

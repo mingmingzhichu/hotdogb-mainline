@@ -336,6 +336,12 @@ if [ -d "$LOCAL_FIRMWARE" ]; then
 		# come from the Debian packages installed above.
 		install -m 0755 "$USERSPACE_TOOLS/sbin/pd-mapper" \
 			"$ROOT/usr/local/sbin/pd-mapper"
+		# qrtr-lookup is how hotdogb-radio.sh `wifi` waits for the WLFW
+		# service before probing ath10k; a too-early probe drops the SoC
+		# into EDL (verified 2026-11-27).
+		[ -f "$USERSPACE_TOOLS/sbin/qrtr-lookup" ] && \
+			install -m 0755 "$USERSPACE_TOOLS/sbin/qrtr-lookup" \
+				"$ROOT/usr/local/sbin/qrtr-lookup"
 		# hexagonrpcd serves the sensor registry to the SLPI: it is what
 		# turns an empty SSC registry into an enumerable sensor list.
 		install -m 0755 "$USERSPACE_TOOLS/sbin/hexagonrpcd" \
