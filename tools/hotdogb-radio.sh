@@ -246,14 +246,22 @@ do_wifi() {
 		say "ath10k_snoc already loaded"
 		return 0
 	fi
-	if command -v modprobe >/dev/null 2>&1; then
-		modprobe ath10k_snoc 2>/dev/null || { say "modprobe ath10k_snoc failed"; return 1; }
-	else
-		for m in cfg80211 mac80211 ath ath10k_core; do
-			[ -f "$MODDIR/$m.ko" ] && insmod "$MODDIR/$m.ko" 2>/dev/null
-		done
-		[ -f "$MODDIR/ath10k_snoc.ko" ] && insmod "$MODDIR/ath10k_snoc.ko" 2>/dev/null
-	fi
+	# Load in the exact order of the verified initramfs path (wifi_up.sh):
+	# cfg80211 -> mac80211 -> ath -> ath10k_core -> ath10k_snoc.  Do NOT use
+	# modprobe here: the distro/Debian ath10k modules have a different build
+	# from the ones verified on this handset and probing them drops the SoC
+	# into EDL.  build_debian_rootfs.sh installs the verified modules into
+	# $MODDIR/ath/ and ath10k/ (from firmware/wifi-modules/).
+	ATHDIR="$MODDIR/kernel/drivers/net/wireless/ath"
+	ATH10KDIR="$ATHDIR/ath10k"
+	for m in cfg80211 mac80211 ath; do
+		[ -f "$ATHDIR/$m.ko" ] || { say "missing $ATHDIR/$m.ko"; return 1; }
+		insmod "$ATHDIR/$m.ko" 2>/dev/null || say "insmod $m failed"
+	done
+	for m in ath10k_core ath10k_snoc; do
+		[ -f "$ATH10KDIR/$m.ko" ] || { say "missing $ATH10KDIR/$m.ko"; return 1; }
+		insmod "$ATH10KDIR/$m.ko" 2>/dev/null || say "insmod $m failed"
+	done
 	[ -d /sys/module/ath10k_core ] && \
 		echo 3145760 > /sys/module/ath10k_core/parameters/debug_mask 2>/dev/null
 	say "ath10k probed; interfaces: $(ls /sys/class/net 2>/dev/null | tr '\n' ' ')"

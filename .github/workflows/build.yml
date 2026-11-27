@@ -228,8 +228,16 @@ jobs:
           sudo mount -o loop out/netboot-debian.img /mnt/hotdogb-root
           sudo mkdir -p /mnt/hotdogb-root/lib/modules
           sudo tar xzf kernel-out/modules.tar.gz -C /mnt/hotdogb-root/lib/modules --strip-components=3
-          sudo depmod -b /mnt/hotdogb-root "$(ls /mnt/hotdogb-root/lib/modules)"
-          sudo test -f "/mnt/hotdogb-root/lib/modules/$(ls /mnt/hotdogb-root/lib/modules)/modules.dep"
+          # The ath10k modules from the kernel build make the WCN3990 drop the
+          # SoC into EDL (verified 2026-11-27).  Replace them with the exact
+          # set verified on the handset; hotdogb-radio.sh wifi insmods these
+          # in order rather than calling modprobe.
+          KVER=$(ls /mnt/hotdogb-root/lib/modules)
+          ATHDIR="/mnt/hotdogb-root/lib/modules/$KVER/kernel/drivers/net/wireless/ath"
+          sudo cp firmware/wifi-modules/*.ko "$ATHDIR/"
+          sudo cp firmware/wifi-modules/ath10k/*.ko "$ATHDIR/ath10k/"
+          sudo depmod -b /mnt/hotdogb-root "$KVER"
+          sudo test -f "/mnt/hotdogb-root/lib/modules/$KVER/modules.dep"
           # The desktop stack is easy to lose to a typo in the package list;
           # fail here instead of shipping an image without an OSK or input
           # method.
