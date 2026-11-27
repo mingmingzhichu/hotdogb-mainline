@@ -163,7 +163,12 @@ build_static pd-mapper pd-mapper "" "-lqrtr -llzma"
 # than through meson, because a meson-built executable links the *host* glibc
 # (2.39 on the runner) while the rootfs ships an older one - it would fail at
 # exec with "GLIBC_2.38 not found".  -static keeps it self-contained.
-"${CROSS}gcc" -static -O2 -I"$QRTR_INC"   -o "$OUT/sbin/qrtr-lookup" "$WORK/qrtr/src/lookup.c"   -L"$QRTR_A_DIR" -lqrtr || { echo "qrtr-lookup build failed" >&2; exit 1; }
+"${CROSS}gcc" -static -O2 -I"$QRTR_INC" \
+  -o "$OUT/sbin/qrtr-lookup" "$WORK/qrtr/src/lookup.c" \
+  -L"$QRTR_A_DIR" -lqrtr || {
+  echo "qrtr-lookup build failed" >&2
+  exit 1
+}
 file "$OUT/sbin/qrtr-lookup" | grep -q 'aarch64' || {
   echo "qrtr-lookup is not an aarch64 binary" >&2
   exit 1
