@@ -127,7 +127,7 @@ EOF
 # make meson prepend it again and gcc would miss glib.h.
 
 # --- qrtr (provides libqrtr.a, needed by all three radio tools) ------------
-gitclone https://github.com/andersson/qrtr.git qrtr
+gitclone https://github.com/linux-msm/qrtr.git qrtr
 meson setup qrtr-build qrtr --cross-file aarch64.ini \
   -Ddefault_library=static
 meson compile -C qrtr-build
@@ -151,14 +151,23 @@ build_static() { # $1=dir  $2=binary  $3=extra CFLAGS  $4=extra LDLIBS
 # pd-mapper needs libqrtr + liblzma; its .qmi is pre-generated in-tree.
 # rmtfs/tqftpserv are intentionally NOT built here: Debian ships both, and
 # hotdogb-radio.sh prefers those services (rmtfs with the correct -r -P -s).
-gitclone https://github.com/andersson/pd-mapper.git pd-mapper
+gitclone https://github.com/linux-msm/pd-mapper.git pd-mapper
 build_static pd-mapper pd-mapper "" "-lqrtr -llzma"
 
 # qrtr-lookup lets hotdogb-radio.sh `wifi` wait for the WLFW service before
 # probing ath10k.  Without that gate the probe takes an SMMU fault and drops
-# the SoC into EDL (verified 2026-11-27).  The qrtr source tree is already
-# checked out above for libqrtr.a, so build the tool from it as well.
-build_static qrtr qrtr-lookup "" "-lqrtr"
+# the SoC into EDL (verified 2026-11-27).
+#
+# qrtr has no Makefile any more: the tools are meson targets built from
+# src/lookup.c against libqrtr.  Compile it with the cross gcc directly rather
+# than through meson, because a meson-built executable links the *host* glibc
+# (2.39 on the runner) while the rootfs ships an older one - it would fail at
+# exec with "GLIBC_2.38 not found".  -static keeps it self-contained.
+"${CROSS}gcc" -static -O2 -I"$QRTR_INC"   -o "$OUT/sbin/qrtr-lookup" "$WORK/qrtr/src/lookup.c"   -L"$QRTR_A_DIR" -lqrtr || { echo "qrtr-lookup build failed" >&2; exit 1; }
+file "$OUT/sbin/qrtr-lookup" | grep -q 'aarch64' || {
+  echo "qrtr-lookup is not an aarch64 binary" >&2
+  exit 1
+}
 
 # --- hexagonrpcd (serves files to the SLPI over FastRPC) -------------------
 # The sensor PD on the SLPI reads its sensor registry and board config through
