@@ -13,7 +13,7 @@
 
 ```
 patches/    按顺序编号的补丁，`git am` 即可
-configs/    内核配置片段（merge_config.sh 用）
+configs/    内核配置（单份 hotdogb_defconfig，附 README 说明）
 docs/       实现说明、参数来源、排查方法
 reference/  从原厂 dtbo 提取的面板节点原文（数据来源，仅供对照）
 firmware/   GPU 需要的三份固件（Adreno 640：SQE / GMU / ZAP），含部署说明；
@@ -72,15 +72,17 @@ for p in patches/*.patch; do patch -p1 < "$p"; done
 ## 编译
 
 ```bash
-scripts/kconfig/merge_config.sh -m .config \
-    configs/hotdogb-display-touch.config configs/hotdogb-audio.config \
-    configs/hotdogb-netboot.config
-make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+cp configs/hotdogb_defconfig arch/arm64/configs/
+make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- hotdogb_defconfig
 make -j$(nproc) ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
     Image qcom/sm8150-oneplus-hotdogb.dtb modules
 ```
 
-配置片段里开了：`DRM_MSM`、`DRM_MSM_DSI`、`DRM_MSM_DSI_7NM_PHY`、`DRM_MSM_KMS_FBDEV`、`DRM_PANEL_SAMSUNG_SOFEF03F`、`RMI4_*`、`I2C_QCOM_GENI`、`REGULATOR_QCOM_LABIBB`。
+配置就一份，`configs/hotdogb_defconfig`（`make savedefconfig` 的产物，1100 行）。它是从
+早先三份 `hotdogb-*.config` 片段合并来的，理由都搬进了 `configs/README.md`；改配置用
+`menuconfig`，之后跑 `tools/make_defconfig.sh` 重新生成，别手改。
+
+里面显眼的是：`DRM_MSM`、`DRM_MSM_DSI`、`DRM_MSM_DSI_7NM_PHY`、`DRM_MSM_KMS_FBDEV`、`DRM_PANEL_SAMSUNG_SOFEF03F`、`REGULATOR_QCOM_LCDB`、`RMI4_*`、`I2C_QCOM_GENI`。
 
 显示/触屏全部编进 `vmlinux`（开机就要用）。音频是模块：`SND_SOC_QDSP6`、`SND_SOC_SM8150`、`MFD_WCD934X`、`SND_SOC_WCD934X`、`SND_SOC_TFA9874`、`SLIM_QCOM_NGD_CTRL`、`SOUNDWIRE_QCOM`，`SLIMBUS` 本身编进内核。装模块：
 
@@ -298,7 +300,7 @@ initramfs 里连上 NBD 后 `switch_root`，不需要写任何分区。
 
 构件：
 
-- 内核：`CONFIG_BLK_DEV_NBD=y`（见 `configs/hotdogb-netboot.config`，CI 会合并）
+- 内核：`CONFIG_BLK_DEV_NBD=y`（在 `configs/hotdogb_defconfig` 里，CI 会断言）
 - initramfs：只有 cmdline 带 `hotdogb.netboot=1` 时才启用，普通启动完全不受影响
 - 主机：`tools/nbd_server.py`（Windows/Linux 自带 Python 3 即可，不装 nbd-server）
 - 镜像：`tools/make_netboot_rootfs.sh` 把任意 rootfs 目录/tar 包做成无分区表的 ext4
