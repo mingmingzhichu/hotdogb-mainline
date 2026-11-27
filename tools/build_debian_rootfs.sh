@@ -261,8 +261,8 @@ install -m 0644 "$FIRMWARE/qcom/sm8150/a640_zap.mbn" \
 FIRMWARE_BACKUP=${HOTDOGB_FIRMWARE_BACKUP:-"$SCRIPT_DIR/../firmware"}
 LOCAL_FIRMWARE="$FIRMWARE_BACKUP/firmware_mnt"
 if [ -d "$LOCAL_FIRMWARE" ]; then
-	for file in modem.mdt modem.b00 modem.b31 wlanmdsp.mbn bdwlan.bin \
-		slpi.mdt adsp.mdt; do
+	for file in modem.mbn modem.mdt modem.b00 modem.b31 wlanmdsp.mbn \
+		bdwlan.bin slpi.mdt adsp.mdt; do
 		if [ ! -f "$LOCAL_FIRMWARE/$file" ]; then
 			echo "missing local firmware: $LOCAL_FIRMWARE/$file" >&2
 			exit 1
@@ -272,6 +272,11 @@ if [ -d "$LOCAL_FIRMWARE" ]; then
 	MODEM_FW="$ROOT/lib/firmware/qcom/sm8150/oneplus7"
 	ATH10K_FW="$ROOT/lib/firmware/ath10k/WCN3990/hw1.0"
 	install -d "$MODEM_FW" "$ATH10K_FW"
+	# DTS asks for the verified single-file modem.mbn.  The handset's split
+	# modem.mdt + bXX image is kept alongside it as a fallback, but it makes
+	# MPSS crash-loop roughly every 40 s on this device, so do not point the
+	# DTS at it.
+	install -m 0644 "$LOCAL_FIRMWARE"/modem.mbn "$MODEM_FW/"
 	install -m 0644 "$LOCAL_FIRMWARE"/modem.mdt \
 		"$LOCAL_FIRMWARE"/modem.b* "$MODEM_FW/"
 	install -m 0644 "$LOCAL_FIRMWARE"/wlanmdsp.mbn \

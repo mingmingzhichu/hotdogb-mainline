@@ -586,7 +586,7 @@ index 0000000..22a0d10
 +
 +&remoteproc_mpss {
 +	status = "okay";
-+	firmware-name = "qcom/sm8150/oneplus7/modem.mdt";
++	firmware-name = "qcom/sm8150/oneplus7/modem.mbn";
 +};
 +
 +// Some of these might be guacamole specific

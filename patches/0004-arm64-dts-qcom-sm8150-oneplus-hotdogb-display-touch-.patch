@@ -341,8 +341,9 @@ index 3d3cf66..7e0c501 100755
 + *   - mpss_mem 160 MiB at 0x8dc00000 (the stock modem image spans that), with
 + *     venus/slpi/ipa/gpu/spss/cdsp pushed up behind it,
 + *   - WCN3990 rails as the vendor describes (ch1 is vreg_l10c_3p3),
-+ *   - MPSS using the handset's split modem.mdt + bXX firmware, matching its
-+ *     wlanmdsp.mbn.
++ *   - MPSS using the verified single-file modem.mbn (7T Pro), matching the
++ *     handset's wlanmdsp.mbn; the split modem.mdt + bXX image makes MPSS
++ *     crash-loop on this device.
 + * The firmware is kept in the Debian rootfs (or copied from modem_a by
 + * initramfs), so the remoteproc is enabled here but started from userspace.
 + */
@@ -384,7 +385,7 @@ index 3d3cf66..7e0c501 100755
 +
 +&remoteproc_mpss {
 +	status = "okay";
-+	firmware-name = "qcom/sm8150/oneplus7/modem.mdt";
++	firmware-name = "qcom/sm8150/oneplus7/modem.mbn";
 +};
 +
 +&remoteproc_adsp {

@@ -6,7 +6,8 @@
 | `ath10k/WCN3990/hw1.0/firmware-5.bin` | 同左 | Debian `firmware-atheros` | WCN3990 ath10k 固件 |
 | `ath10k/WCN3990/hw1.0/board.bin` | 同左 | **本机 `modem_a` 分区**的 `bdwlan.bin` | 设备板级数据；作为 `board-2.bin` 失败时的回退 |
 | `qcom/sm8150/oneplus7/wlanmdsp.mbn` | 同左；也复制到 ath10k 目录 | **本机 `modem_a` 分区** | 4 070 084 B，见下 |
-| `qcom/sm8150/oneplus7/modem.mdt` + `modem.b*` | 同左 | 本机 `firmware/firmware_mnt` | 本机分片 MPSS；DTS 请求 `.mdt` |
+| `qcom/sm8150/oneplus7/modem.mbn` | 同左 | 7T Pro `firmware-oneplus-hotdog`（MPSS.HE.1.0.c11.1-00007） | **DTS 请求此单文件**；唯一真机验证可用的 MPSS |
+| `qcom/sm8150/oneplus7/modem.mdt` + `modem.b*` | 同左 | 本机 `firmware/firmware_mnt` | 本机分片 MPSS；保留作对照，实机会每 ~40 s crash-loop |
 | `qcom/sm8150/oneplus7/*.jsn` | 同左 | 本机 `firmware/firmware_mnt` | pd-mapper protection-domain 映射 |
 | `qcom/sm8150/adsp.mdt` + `adsp.b*` | 同左 | 本机 `firmware/firmware_mnt` | ADSP 固件 |
 | `qcom/sm8150/oneplus7/slpi.mdt` + `slpi.b*` | 同左 | 本机 `firmware/firmware_mnt` | SLPI 固件 |
@@ -40,9 +41,12 @@ ath10k_snoc 18800000.wifi: failed to assign msa map permissions: -22
 `HOTDOGB_FIRMWARE_BACKUP` 指定另一个包含 `firmware_mnt/` 的目录。
 设备专用固件目录由 `.gitignore` 排除，不会随 Git 分发；公开 CI 不含这些文件。
 
-本机备份中的 MPSS 是 `modem.mdt` + 分片，而不是经验证的单文件 `modem.mbn`。
-内核 DTS 已改为请求 `.mdt`；此格式尚待真机验证。Wi-Fi 启动还需要
-`rmtfs`、`pd-mapper`、`tqftpserv` 按顺序运行；仅把固件放进 rootfs 不会自动启动无线栈。
+MPSS 用经验证的单文件 `modem.mbn`（7T Pro，`bfaac8c1…`，75 959 184 B）。
+本机 `modem_a` 里的分片 `modem.mdt` + `modem.b*` 虽然也打包进 rootfs 作对照，但
+2026-11-27 真机验证：DTS 指向 `.mdt` 时 MPSS 每 ~40 s `crash detected ... recovering`，
+QRTR 上没有任何服务，ath10k 无从加载。DTS 与构建脚本现已改回 `.mbn`。
+Wi-Fi 启动还需要 `rmtfs`、`pd-mapper`、`tqftpserv` 按顺序运行；仅把固件放进
+rootfs 不会自动启动无线栈。
 
 ## 预置的运行时数据（2026-11-26）
 
