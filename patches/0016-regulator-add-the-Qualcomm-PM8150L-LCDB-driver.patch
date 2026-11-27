@@ -1,0 +1,578 @@
+From 6db7d27564e58d3ac28cb4ec36fecba6999b5a63 Mon Sep 17 00:00:00 2001
+From: mingmingzhichu <lihaoyu0717@outlook.com>
+Date: Sat, 28 Nov 2026 00:16:11 +0800
+Subject: [PATCH 2/4] regulator: add the Qualcomm PM8150L LCDB driver
+
+The PM8150L carries the LCDB block at SPMI address 0xec00: a boost
+converter feeding an LDO (the panel's positive ELVDD rail) and an
+inverting charge pump (the negative ELVSS rail).  Without a driver the
+rails only exist because the bootloader left them on for the continuous
+splash, which means a cold boot or a display power cycle loses them.
+
+The vendor driver covers several PMICs and a lot of policy that mainline
+does not need (touch-to-wake, secure UI mode, per-board current limits).
+This driver implements what a panel needs: output voltage selection, the
+shared module enable with its VREG_OK handshake and the discharge path
+used when the rails go away, plus taking over the live register state
+when the bootloader already powered the block.
+
+Tested on the OnePlus 7T (hotdogb) with a Samsung SOFEF03F panel.
+---
+ drivers/regulator/Kconfig               |  10 +
+ drivers/regulator/Makefile              |   1 +
+ drivers/regulator/qcom-lcdb-regulator.c | 512 ++++++++++++++++++++++++
+ 3 files changed, 523 insertions(+)
+ create mode 100755 drivers/regulator/qcom-lcdb-regulator.c
+
+diff --git a/drivers/regulator/Kconfig b/drivers/regulator/Kconfig
+index 89789ac7a..7953b0ffa 100644
+--- a/drivers/regulator/Kconfig
++++ b/drivers/regulator/Kconfig
+@@ -1896,4 +1896,14 @@ config REGULATOR_QCOM_LABIBB
+ 	  boost regulator and IBB can be used as a negative boost regulator
+ 	  for LCD display panel.
+ 
++config REGULATOR_QCOM_LCDB
++	tristate "Qualcomm PM8150L LCDB regulator support"
++	depends on MFD_SPMI_PMIC || COMPILE_TEST
++	help
++	  This driver supports the LCDB bias block of the Qualcomm PM8150L
++	  PMIC, which generates the positive (ELVDD) and negative (ELVSS)
++	  supplies of an AMOLED panel.
++
++	  Say M here if you want to build this as a module.
++
+ endif
+diff --git a/drivers/regulator/Makefile b/drivers/regulator/Makefile
+index 5a764cec8..99270ce5d 100644
+--- a/drivers/regulator/Makefile
++++ b/drivers/regulator/Makefile
+@@ -121,6 +121,7 @@ obj-$(CONFIG_REGULATOR_MT6380)	+= mt6380-regulator.o
+ obj-$(CONFIG_REGULATOR_MT6397)	+= mt6397-regulator.o
+ obj-$(CONFIG_REGULATOR_MTK_DVFSRC) += mtk-dvfsrc-regulator.o
+ obj-$(CONFIG_REGULATOR_QCOM_LABIBB) += qcom-labibb-regulator.o
++obj-$(CONFIG_REGULATOR_QCOM_LCDB) += qcom-lcdb-regulator.o
+ obj-$(CONFIG_REGULATOR_QCOM_PM8008) += qcom-pm8008-regulator.o
+ obj-$(CONFIG_REGULATOR_QCOM_REFGEN) += qcom-refgen-regulator.o
+ obj-$(CONFIG_REGULATOR_QCOM_RPM) += qcom_rpm-regulator.o
+diff --git a/drivers/regulator/qcom-lcdb-regulator.c b/drivers/regulator/qcom-lcdb-regulator.c
+new file mode 100755
+index 000000000..8a6b9c611
+--- /dev/null
++++ b/drivers/regulator/qcom-lcdb-regulator.c
+@@ -0,0 +1,512 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Qualcomm PM8150L LCDB (LCD bias) regulator driver
++ *
++ * The LCDB block supplies the two bias rails an AMOLED panel needs: ELVDD
++ * (positive) from its LDO output and ELVSS (negative) from its inverting
++ * charge pump (NCP).  Both share one boost converter, whose output has to
++ * stay a fixed headroom above the larger of the two.
++ *
++ * This driver covers what a panel needs to come up: output voltage
++ * selection, the shared module enable with its VREG_OK handshake, and the
++ * pull-down used when the rails go away.  Touch-to-wake and the ILIM/PFM
++ * tuning knobs are left alone; the LCDB is already running the bootloader's
++ * continuous splash when Linux takes over, so those values are known good.
++ */
++
++#include <linux/delay.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/regmap.h>
++#include <linux/regulator/driver.h>
++#include <linux/regulator/machine.h>
++#include <linux/regulator/of_regulator.h>
++
++#define LCDB_INT_RT_STATUS		0x10
++#define LCDB_VREG_OK			BIT(0)
++#define LCDB_SC_ERROR			BIT(1)
++
++#define LCDB_BST_VOLTAGE		0x41
++#define LCDB_BST_VOLTAGE_MASK		GENMASK(5, 0)
++
++#define LCDB_MODULE_RDY			0x45
++#define LCDB_MODULE_RDY_BIT		BIT(7)
++
++#define LCDB_ENABLE_CTL1		0x46
++#define LCDB_MODULE_EN			BIT(7)
++
++#define LCDB_LDO_VOLTAGE		0x71
++#define LCDB_LDO_FORCE_PD		0x79
++#define LCDB_LDO_FORCE_PD_EN		BIT(0)
++#define LCDB_LDO_FORCE_PD_MODE		BIT(7)
++
++#define LCDB_NCP_VOLTAGE		0x81
++#define LCDB_VOLTAGE_MASK		GENMASK(4, 0)
++
++/*
++ * Both outputs share one encoding: 4.0-4.95V in 100mV steps, then
++ * 4.95-6.0V in 50mV steps.
++ */
++#define LCDB_MIN_UV			4000000
++#define LCDB_MAX_UV			6000000
++#define LCDB_FINE_BASE_UV		4950000
++#define LCDB_FINE_SEL			10
++#define LCDB_N_VOLTAGES			32
++#define LCDB_DEFAULT_UV			4600000
++
++/* Boost output: 4.7-6.275V in 25mV steps, kept above both outputs. */
++#define LCDB_BST_MIN_UV			4700000
++#define LCDB_BST_STEP_UV		25000
++#define LCDB_BST_MAX_UV			6275000
++#define LCDB_BST_HEADROOM_MV		150
++
++/* Ramp the outputs up in 500mV steps when the module was fully off. */
++#define LCDB_RAMP_START_UV		4500000
++#define LCDB_RAMP_STEP_UV		500000
++
++#define LCDB_OFF_ON_DELAY_US		20000
++#define LCDB_ENABLE_POLL_US		1000
++#define LCDB_ENABLE_POLL_TRIES		20
++
++struct qcom_lcdb;
++
++/**
++ * struct qcom_lcdb_output - one bias output of the shared LCDB module
++ * @desc: regulator descriptor
++ * @lcdb: back pointer to the block
++ * @voltage_reg: output voltage register offset
++ * @uv: voltage currently programmed, in microvolts
++ */
++struct qcom_lcdb_output {
++	struct regulator_desc		desc;
++	struct qcom_lcdb		*lcdb;
++	unsigned int			voltage_reg;
++	int				uv;
++};
++
++/**
++ * struct qcom_lcdb - LCDB block state
++ * @dev: parent device
++ * @regmap: regmap of the PMIC the block lives in
++ * @base: SPMI address of the LCDB peripheral
++ * @lock: protects @enable_count and the voltage registers
++ * @enable_count: number of enabled consumers of the shared module
++ * @headroom_mv: boost headroom above the highest output
++ * @ramp: step the outputs up instead of jumping to the target
++ * @lab: positive (LDO) output
++ * @ibb: negative (NCP) output
++ */
++struct qcom_lcdb {
++	struct device			*dev;
++	struct regmap			*regmap;
++	unsigned int			base;
++	struct mutex			lock;	/* protects the fields below */
++	unsigned int			enable_count;
++	unsigned int			headroom_mv;
++	bool				ramp;
++	struct qcom_lcdb_output		lab;
++	struct qcom_lcdb_output		ibb;
++};
++
++static int qcom_lcdb_uv_to_sel(int uv)
++{
++	if (uv < LCDB_FINE_BASE_UV)
++		return DIV_ROUND_UP(uv - LCDB_MIN_UV, 100000);
++
++	return DIV_ROUND_UP(uv - LCDB_FINE_BASE_UV, 50000) + LCDB_FINE_SEL;
++}
++
++static int qcom_lcdb_sel_to_uv(unsigned int sel)
++{
++	if (sel < LCDB_FINE_SEL)
++		return LCDB_MIN_UV + sel * 100000;
++
++	return LCDB_FINE_BASE_UV + (sel - LCDB_FINE_SEL) * 50000;
++}
++
++static int qcom_lcdb_read_uv(struct qcom_lcdb *lcdb,
++			     struct qcom_lcdb_output *out)
++{
++	unsigned int val;
++	int ret;
++
++	ret = regmap_read(lcdb->regmap, lcdb->base + out->voltage_reg, &val);
++	if (ret)
++		return ret;
++
++	return qcom_lcdb_sel_to_uv(val & LCDB_VOLTAGE_MASK);
++}
++
++static int qcom_lcdb_write_voltage(struct qcom_lcdb *lcdb,
++				   struct qcom_lcdb_output *out, int uv)
++{
++	return regmap_update_bits(lcdb->regmap, lcdb->base + out->voltage_reg,
++				  LCDB_VOLTAGE_MASK, qcom_lcdb_uv_to_sel(uv));
++}
++
++/*
++ * Vout_boost = max(Vout_lab, |Vout_ibb|) + headroom, and it has to be
++ * refreshed every time either output moves or the regulators drop out.
++ */
++static int qcom_lcdb_write_bst(struct qcom_lcdb *lcdb)
++{
++	unsigned int uv, sel;
++
++	uv = max(lcdb->lab.uv, lcdb->ibb.uv) + lcdb->headroom_mv * 1000;
++	uv = clamp(uv, LCDB_BST_MIN_UV, LCDB_BST_MAX_UV);
++	sel = DIV_ROUND_UP(uv - LCDB_BST_MIN_UV, LCDB_BST_STEP_UV);
++
++	return regmap_update_bits(lcdb->regmap, lcdb->base + LCDB_BST_VOLTAGE,
++				  LCDB_BST_VOLTAGE_MASK, sel);
++}
++
++static int qcom_lcdb_module_ready(struct qcom_lcdb *lcdb)
++{
++	unsigned int val;
++	int ret;
++
++	ret = regmap_read(lcdb->regmap, lcdb->base + LCDB_MODULE_RDY, &val);
++	if (ret || (val & LCDB_MODULE_RDY_BIT))
++		return ret;
++
++	return regmap_update_bits(lcdb->regmap, lcdb->base + LCDB_MODULE_RDY,
++				  LCDB_MODULE_RDY_BIT, LCDB_MODULE_RDY_BIT);
++}
++
++static int qcom_lcdb_module_enable(struct qcom_lcdb *lcdb)
++{
++	unsigned int val;
++	int uv, target, ret, i;
++
++	ret = qcom_lcdb_module_ready(lcdb);
++	if (ret)
++		return ret;
++
++	if (lcdb->ramp) {
++		target = max(lcdb->lab.uv, lcdb->ibb.uv);
++		for (uv = LCDB_RAMP_START_UV; uv < target;
++		     uv += LCDB_RAMP_STEP_UV) {
++			qcom_lcdb_write_voltage(lcdb, &lcdb->lab,
++						min(uv, lcdb->lab.uv));
++			qcom_lcdb_write_voltage(lcdb, &lcdb->ibb,
++						min(uv, lcdb->ibb.uv));
++			usleep_range(1000, 1100);
++		}
++	}
++
++	qcom_lcdb_write_voltage(lcdb, &lcdb->lab, lcdb->lab.uv);
++	qcom_lcdb_write_voltage(lcdb, &lcdb->ibb, lcdb->ibb.uv);
++	ret = qcom_lcdb_write_bst(lcdb);
++	if (ret)
++		return ret;
++
++	ret = regmap_update_bits(lcdb->regmap, lcdb->base + LCDB_ENABLE_CTL1,
++				 LCDB_MODULE_EN, LCDB_MODULE_EN);
++	if (ret)
++		return ret;
++
++	/* The module raises VREG_OK once the boost and both outputs are up. */
++	for (i = 0; i < LCDB_ENABLE_POLL_TRIES; i++) {
++		usleep_range(LCDB_ENABLE_POLL_US, LCDB_ENABLE_POLL_US + 200);
++
++		ret = regmap_read(lcdb->regmap, lcdb->base + LCDB_INT_RT_STATUS,
++				  &val);
++		if (ret)
++			break;
++
++		if (val & LCDB_SC_ERROR)
++			dev_warn(lcdb->dev, "short circuit reported\n");
++
++		if (val & LCDB_VREG_OK)
++			return 0;
++	}
++
++	if (!ret)
++		ret = -ETIMEDOUT;
++
++	regmap_update_bits(lcdb->regmap, lcdb->base + LCDB_ENABLE_CTL1,
++			   LCDB_MODULE_EN, 0);
++
++	dev_err(lcdb->dev, "LCDB failed to power up: %d\n", ret);
++	return ret;
++}
++
++static void qcom_lcdb_module_disable(struct qcom_lcdb *lcdb)
++{
++	/* Pull the LDO down hard so the panel discharges before the next on. */
++	regmap_update_bits(lcdb->regmap, lcdb->base + LCDB_LDO_FORCE_PD,
++			   LCDB_LDO_FORCE_PD_EN | LCDB_LDO_FORCE_PD_MODE,
++			   LCDB_LDO_FORCE_PD_EN | LCDB_LDO_FORCE_PD_MODE);
++
++	regmap_update_bits(lcdb->regmap, lcdb->base + LCDB_ENABLE_CTL1,
++			   LCDB_MODULE_EN, 0);
++
++	usleep_range(LCDB_OFF_ON_DELAY_US / 2, LCDB_OFF_ON_DELAY_US / 2 + 1000);
++
++	regmap_update_bits(lcdb->regmap, lcdb->base + LCDB_LDO_FORCE_PD,
++			   LCDB_LDO_FORCE_PD_EN | LCDB_LDO_FORCE_PD_MODE, 0);
++}
++
++static int qcom_lcdb_regulator_enable(struct regulator_dev *rdev)
++{
++	struct qcom_lcdb_output *out = rdev_get_drvdata(rdev);
++	struct qcom_lcdb *lcdb = out->lcdb;
++	int ret = 0;
++
++	mutex_lock(&lcdb->lock);
++	if (lcdb->enable_count) {
++		lcdb->enable_count++;
++		goto out;
++	}
++
++	ret = qcom_lcdb_module_enable(lcdb);
++	if (!ret)
++		lcdb->enable_count = 1;
++out:
++	mutex_unlock(&lcdb->lock);
++
++	return ret;
++}
++
++static int qcom_lcdb_regulator_disable(struct regulator_dev *rdev)
++{
++	struct qcom_lcdb_output *out = rdev_get_drvdata(rdev);
++	struct qcom_lcdb *lcdb = out->lcdb;
++
++	mutex_lock(&lcdb->lock);
++	if (lcdb->enable_count)
++		lcdb->enable_count--;
++
++	/*
++	 * The regulator core skips .enable when the hardware is already on,
++	 * which is the normal case right after the bootloader's splash, so the
++	 * count can legitimately be zero here.
++	 */
++	if (!lcdb->enable_count)
++		qcom_lcdb_module_disable(lcdb);
++	mutex_unlock(&lcdb->lock);
++
++	return 0;
++}
++
++static int qcom_lcdb_regulator_is_enabled(struct regulator_dev *rdev)
++{
++	struct qcom_lcdb_output *out = rdev_get_drvdata(rdev);
++	struct qcom_lcdb *lcdb = out->lcdb;
++	unsigned int val;
++	int ret;
++
++	ret = regmap_read(lcdb->regmap, lcdb->base + LCDB_ENABLE_CTL1, &val);
++	if (ret)
++		return ret;
++
++	return !!(val & LCDB_MODULE_EN);
++}
++
++static int qcom_lcdb_regulator_set_voltage(struct regulator_dev *rdev,
++					   int min_uv, int max_uv,
++					   unsigned int *selector)
++{
++	struct qcom_lcdb_output *out = rdev_get_drvdata(rdev);
++	struct qcom_lcdb *lcdb = out->lcdb;
++	unsigned int sel;
++	int uv, ret;
++
++	if (min_uv > LCDB_MAX_UV || max_uv < LCDB_MIN_UV)
++		return -EINVAL;
++
++	min_uv = max_t(int, min_uv, LCDB_MIN_UV);
++	max_uv = min_t(int, max_uv, LCDB_MAX_UV);
++
++	/* Pick the lowest supported voltage inside the requested window. */
++	sel = qcom_lcdb_uv_to_sel(min_uv);
++	uv = qcom_lcdb_sel_to_uv(sel);
++	if (uv > max_uv)
++		return -EINVAL;
++
++	mutex_lock(&lcdb->lock);
++	ret = qcom_lcdb_write_voltage(lcdb, out, uv);
++	if (!ret) {
++		out->uv = uv;
++		if (lcdb->enable_count)
++			ret = qcom_lcdb_write_bst(lcdb);
++	}
++	mutex_unlock(&lcdb->lock);
++
++	if (!ret && selector)
++		*selector = sel;
++
++	return ret;
++}
++
++static int qcom_lcdb_regulator_get_voltage(struct regulator_dev *rdev)
++{
++	struct qcom_lcdb_output *out = rdev_get_drvdata(rdev);
++
++	return qcom_lcdb_read_uv(out->lcdb, out);
++}
++
++static int qcom_lcdb_regulator_list_voltage(struct regulator_dev *rdev,
++					    unsigned int selector)
++{
++	if (selector >= LCDB_N_VOLTAGES)
++		return -EINVAL;
++
++	return qcom_lcdb_sel_to_uv(selector);
++}
++
++static const struct regulator_ops qcom_lcdb_ops = {
++	.enable		= qcom_lcdb_regulator_enable,
++	.disable	= qcom_lcdb_regulator_disable,
++	.is_enabled	= qcom_lcdb_regulator_is_enabled,
++	.set_voltage	= qcom_lcdb_regulator_set_voltage,
++	.get_voltage	= qcom_lcdb_regulator_get_voltage,
++	.list_voltage	= qcom_lcdb_regulator_list_voltage,
++};
++
++static int qcom_lcdb_register_output(struct qcom_lcdb *lcdb,
++				     struct qcom_lcdb_output *out,
++				     const char *name, unsigned int voltage_reg)
++{
++	struct regulator_config cfg = {};
++	struct regulator_init_data *init_data;
++	struct device_node *node;
++	int ret;
++
++	node = of_get_child_by_name(lcdb->dev->of_node, name);
++	if (!node)
++		return dev_err_probe(lcdb->dev, -EINVAL,
++				     "missing %s supply node\n", name);
++
++	out->lcdb = lcdb;
++	out->voltage_reg = voltage_reg;
++
++	out->desc.name = name;
++	out->desc.of_match = name;
++	out->desc.owner = THIS_MODULE;
++	out->desc.type = REGULATOR_VOLTAGE;
++	out->desc.ops = &qcom_lcdb_ops;
++	out->desc.n_voltages = LCDB_N_VOLTAGES;
++	out->desc.off_on_delay = LCDB_OFF_ON_DELAY_US;
++
++	init_data = of_get_regulator_init_data(lcdb->dev, node, &out->desc);
++	if (!init_data) {
++		of_node_put(node);
++		return -ENOMEM;
++	}
++
++	if (init_data->constraints.name)
++		out->desc.name = init_data->constraints.name;
++
++	/* The enable bits are shared with the other output, so no change. */
++	init_data->constraints.valid_ops_mask |= REGULATOR_CHANGE_VOLTAGE |
++						 REGULATOR_CHANGE_STATUS;
++
++	out->uv = init_data->constraints.min_uV;
++	if (out->uv <= 0)
++		out->uv = LCDB_DEFAULT_UV;
++
++	cfg.dev = lcdb->dev;
++	cfg.init_data = init_data;
++	cfg.of_node = node;
++	cfg.driver_data = out;
++
++	ret = PTR_ERR_OR_ZERO(devm_regulator_register(lcdb->dev, &out->desc,
++						      &cfg));
++	of_node_put(node);
++
++	return ret;
++}
++
++static int qcom_lcdb_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct qcom_lcdb *lcdb;
++	unsigned int base, val;
++	u32 headroom;
++	int ret;
++
++	lcdb = devm_kzalloc(dev, sizeof(*lcdb), GFP_KERNEL);
++	if (!lcdb)
++		return -ENOMEM;
++
++	lcdb->dev = dev;
++	lcdb->regmap = dev_get_regmap(dev->parent, NULL);
++	if (!lcdb->regmap)
++		return dev_err_probe(dev, -ENODEV, "no parent regmap\n");
++
++	ret = device_property_read_u32(dev, "reg", &base);
++	if (ret)
++		return dev_err_probe(dev, ret, "missing reg\n");
++	lcdb->base = base;
++
++	lcdb->headroom_mv = LCDB_BST_HEADROOM_MV;
++	if (!device_property_read_u32(dev, "qcom,bst-headroom-mv", &headroom))
++		lcdb->headroom_mv = max(headroom, (u32)LCDB_BST_HEADROOM_MV);
++
++	lcdb->ramp = device_property_read_bool(dev, "qcom,voltage-step-ramp");
++	mutex_init(&lcdb->lock);
++	platform_set_drvdata(pdev, lcdb);
++
++	ret = qcom_lcdb_register_output(lcdb, &lcdb->lab, "lab",
++					LCDB_LDO_VOLTAGE);
++	if (ret)
++		return ret;
++
++	ret = qcom_lcdb_register_output(lcdb, &lcdb->ibb, "ibb",
++					LCDB_NCP_VOLTAGE);
++	if (ret)
++		return ret;
++
++	/*
++	 * The bootloader leaves the rails up for the continuous splash.  In
++	 * that case the registers hold the values the panel was initialised
++	 * with, so take them over instead of reprogramming a live supply.
++	 */
++	mutex_lock(&lcdb->lock);
++	ret = regmap_read(lcdb->regmap, lcdb->base + LCDB_ENABLE_CTL1, &val);
++	if (ret) {
++		mutex_unlock(&lcdb->lock);
++		return ret;
++	}
++
++	if (val & LCDB_MODULE_EN) {
++		ret = qcom_lcdb_read_uv(lcdb, &lcdb->lab);
++		if (ret > 0)
++			lcdb->lab.uv = ret;
++		ret = qcom_lcdb_read_uv(lcdb, &lcdb->ibb);
++		if (ret > 0)
++			lcdb->ibb.uv = ret;
++	} else {
++		qcom_lcdb_module_ready(lcdb);
++		qcom_lcdb_write_voltage(lcdb, &lcdb->lab, lcdb->lab.uv);
++		qcom_lcdb_write_voltage(lcdb, &lcdb->ibb, lcdb->ibb.uv);
++		qcom_lcdb_write_bst(lcdb);
++	}
++	mutex_unlock(&lcdb->lock);
++
++	dev_info(dev, "LCDB ready: lab %dmV, ibb %dmV, boost headroom %dmV\n",
++		 lcdb->lab.uv / 1000, lcdb->ibb.uv / 1000, lcdb->headroom_mv);
++
++	return 0;
++}
++
++static const struct of_device_id qcom_lcdb_of_match[] = {
++	{ .compatible = "qcom,pm8150l-lcdb" },
++	{}
++};
++MODULE_DEVICE_TABLE(of, qcom_lcdb_of_match);
++
++static struct platform_driver qcom_lcdb_driver = {
++	.probe		= qcom_lcdb_probe,
++	.driver		= {
++		.name		= "qcom-lcdb",
++		.of_match_table	= qcom_lcdb_of_match,
++	},
++};
++module_platform_driver(qcom_lcdb_driver);
++
++MODULE_DESCRIPTION("Qualcomm PM8150L LCDB bias regulator driver");
++MODULE_LICENSE("GPL");
+-- 
+2.34.1
+

@@ -1,0 +1,77 @@
+From 9415b82d5f17d9e1c1c301377a654075cdc2bb50 Mon Sep 17 00:00:00 2001
+From: mingmingzhichu <lihaoyu0717@outlook.com>
+Date: Sat, 28 Nov 2026 00:16:12 +0800
+Subject: [PATCH 4/4] arm64: dts: qcom: sm8150-oneplus-hotdogb: add the LCDB
+ bias rails
+
+Describe the PM8150L LCDB block and hook its two outputs up to the panel.
+Both rails run at 4.6V, which is what the vendor panel supply table asks
+for; the shared boost converter stays 150mV above the higher of them.
+
+The PM8150L node needs a label for the board file to extend, so add one
+while here.
+---
+ arch/arm64/boot/dts/qcom/pm8150l.dtsi         |  2 +-
+ .../boot/dts/qcom/sm8150-oneplus-hotdogb.dts  | 29 +++++++++++++++++++
+ 2 files changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/pm8150l.dtsi b/arch/arm64/boot/dts/qcom/pm8150l.dtsi
+index 3911d6d0d..0160c1b22 100644
+--- a/arch/arm64/boot/dts/qcom/pm8150l.dtsi
++++ b/arch/arm64/boot/dts/qcom/pm8150l.dtsi
+@@ -39,7 +39,7 @@ trip2 {
+ };
+ 
+ &spmi_bus {
+-	pmic@4 {
++	pm8150l: pmic@4 {
+ 		compatible = "qcom,pm8150l", "qcom,spmi-pmic";
+ 		reg = <0x4 SPMI_USID>;
+ 		#address-cells = <1>;
+diff --git a/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts b/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
+index 478e0e8c2..f25123a16 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
++++ b/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
+@@ -80,6 +80,8 @@ panel@0 {
+ 		reg = <0>;
+ 
+ 		vddio-supply = <&vreg_l14a_1p8>;
++		lab-supply = <&lcdb_lab>;
++		ibb-supply = <&lcdb_ibb>;
+ 
+ 		reset-gpios = <&tlmm 6 GPIO_ACTIVE_LOW>;
+ 		te-gpios = <&tlmm 8 GPIO_ACTIVE_LOW>;
+@@ -629,3 +631,30 @@ codec {
+ 		};
+ 	};
+ };
++
++/*
++ * LCD bias: the PM8150L LCDB block generates the panel's ELVDD (lab,
++ * positive) and ELVSS (ibb, negative) rails.  The panel node above is the
++ * only consumer, so they come up when it is prepared and go away again when
++ * it is unprepared.
++ */
++&pm8150l {
++	lcdb@ec00 {
++		compatible = "qcom,pm8150l-lcdb";
++		reg = <0xec00>;
++
++		qcom,voltage-step-ramp;
++
++		lcdb_lab: lab {
++			regulator-name = "lab";
++			regulator-min-microvolt = <4600000>;
++			regulator-max-microvolt = <4600000>;
++		};
++
++		lcdb_ibb: ibb {
++			regulator-name = "ibb";
++			regulator-min-microvolt = <4600000>;
++			regulator-max-microvolt = <4600000>;
++		};
++	};
++};
+-- 
+2.34.1
+

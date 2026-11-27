@@ -1,0 +1,108 @@
+From 60d5e9d3f90bf388db0d299c8cd9bf83495fd37c Mon Sep 17 00:00:00 2001
+From: mingmingzhichu <lihaoyu0717@outlook.com>
+Date: Sat, 28 Nov 2026 00:16:10 +0800
+Subject: [PATCH 1/4] dt-bindings: regulator: add the Qualcomm PM8150L LCDB
+
+The LCDB block in the PM8150L generates the two bias rails of an AMOLED
+panel: ELVDD (positive) from its LDO output and ELVSS (negative) from its
+inverting charge pump.  Both share one boost converter that has to stay a
+fixed headroom above the larger of the two.
+
+Document the block, its two outputs and the two knobs the driver needs.
+---
+ .../bindings/regulator/qcom,pm8150l-lcdb.yaml | 83 +++++++++++++++++++
+ 1 file changed, 83 insertions(+)
+ create mode 100755 Documentation/devicetree/bindings/regulator/qcom,pm8150l-lcdb.yaml
+
+diff --git a/Documentation/devicetree/bindings/regulator/qcom,pm8150l-lcdb.yaml b/Documentation/devicetree/bindings/regulator/qcom,pm8150l-lcdb.yaml
+new file mode 100755
+index 000000000..2a691f4b5
+--- /dev/null
++++ b/Documentation/devicetree/bindings/regulator/qcom,pm8150l-lcdb.yaml
+@@ -0,0 +1,83 @@
++# SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/regulator/qcom,pm8150l-lcdb.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Qualcomm PM8150L LCDB (LCD bias) regulators
++
++maintainers:
++  - Mingming Zhichu <lihaoyu0717@outlook.com>
++
++description:
++  The LCDB block in the PM8150L PMIC generates the two bias rails of an
++  AMOLED panel.  The positive rail (ELVDD) comes from its LDO output, the
++  negative one (ELVSS) from its inverting charge pump.  Both outputs share a
++  single boost converter, whose output is kept a fixed headroom above the
++  larger of the two.
++
++properties:
++  compatible:
++    const: qcom,pm8150l-lcdb
++
++  reg:
++    maxItems: 1
++
++  qcom,bst-headroom-mv:
++    description:
++      Headroom of the shared boost converter above the higher of the two
++      outputs.  Values below the hardware default are ignored.
++    minimum: 150
++    maximum: 1575
++    default: 150
++
++  qcom,voltage-step-ramp:
++    description:
++      Ramp the outputs up in 500mV steps starting at 4.5V instead of jumping
++      straight to the target.  Needed on boards where the inrush current of
++      a single step trips the boost converter.
++    type: boolean
++
++  lab:
++    type: object
++    $ref: regulator.yaml#
++    unevaluatedProperties: false
++
++  ibb:
++    type: object
++    $ref: regulator.yaml#
++    unevaluatedProperties: false
++
++required:
++  - compatible
++  - reg
++  - lab
++  - ibb
++
++additionalProperties: false
++
++examples:
++  - |
++    pmic {
++      #address-cells = <1>;
++      #size-cells = <0>;
++
++      lcdb@ec00 {
++        compatible = "qcom,pm8150l-lcdb";
++        reg = <0xec00>;
++        qcom,voltage-step-ramp;
++
++        lab {
++          regulator-name = "lab";
++          regulator-min-microvolt = <4600000>;
++          regulator-max-microvolt = <4600000>;
++        };
++
++        ibb {
++          regulator-name = "ibb";
++          regulator-min-microvolt = <4600000>;
++          regulator-max-microvolt = <4600000>;
++        };
++      };
++    };
++...
+-- 
+2.34.1
+

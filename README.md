@@ -41,6 +41,11 @@ boot/       32 字节空 DTBO（跑主线前必须刷，见"启动前"）
 | 0011 | `regulator: rpmh: allow platforms to skip voltage/state readback` | 固件不交 read 通道时用缓存值，避免 TCS 被占死 |
 | 0012 | `arm64: dts: qcom: hotdogb: skip the RPMh regulator readback` | 在 pm8150/pm8150l/pm8009 上打开 `qcom,no-readback` |
 | 0013 | `arm64: dts: qcom: sm8150: add the 2.9568 GHz prime CPU OPP` | 855+ 的 prime core 多一档，DT 缺这档会被 cpufreq 丢掉 |
+| 0014 | `arm64: dts: qcom: sm8150: fix the SLPI fastrpc node` | FastRPC 节点改成 sdm845 的形态，传感器进程才不会一 attach 就崩 |
+| 0015 | `dt-bindings: regulator: add the Qualcomm PM8150L LCDB` | 新增 YAML binding |
+| 0016 | `regulator: add the Qualcomm PM8150L LCDB driver` | 新驱动 + Kconfig/Makefile，管 lab/ibb 两路偏压 |
+| 0017 | `drm/panel: sofef03f: take the LCDB bias rails` | 面板驱动真正去开 `lab`/`ibb`，不再依赖启动器 |
+| 0018 | `arm64: dts: qcom: sm8150-oneplus-hotdogb: add the LCDB bias rails` | PM8150L 节点加 label、接上面板、两路都定 4.6V |
 
 补丁基于上游稳定版 `linux-7.3.3`（kernel.org，`linux-7.3.3.tar.xz`）。
 
@@ -105,9 +110,9 @@ fastboot flash boot boot.img         # 内核 + DTB 打包在 boot 里
 
 ## 已知缺口
 
-**面板偏压**。这块屏还要 PM8150L LCDB 出来的 `lab`/`ibb`（±5.5V 左右）。主线有 `qcom-labibb-regulator.c`，但那是给 PMI8998 那代 SPMI PMIC 用的，PM8150L 的 LCDB 是另一套寄存器，目前没人写。所以驱动只建模了 `vddio`，偏压靠启动器留着（连续启动画面机制）。**如果屏幕亮了但全黑，多半就是这个原因**，不是驱动写错了。
+**面板偏压**（已补上驱动）。这块屏还要 PM8150L LCDB 出来的 `lab`/`ibb`。主线原有的 `qcom-labibb-regulator.c` 是给 PMI8998 那代 SPMI PMIC 用的，PM8150L 的 LCDB 是另一套寄存器（`0xec00`，LDO+NCP+共享 boost），所以补了 `qcom-lcdb-regulator.c`（补丁 0015–0018）。
 
-要彻底解决得写一个 `qpnp-lcdb` 驱动，那是下一步的事。
+驱动只做面板要用的部分：输出电压选择、共享 module enable + `VREG_OK` 握手、下电时的放电。触摸唤醒、ILIM/PFM 这些留给启动器设定的值 —— 内核接手时屏幕正处在连续启动画面，那些值本来就是对的。**还没在真机上验证**。
 
 **亮度**：走 DSI 的 `set_display_brightness`，没有额外背光芯片。原厂面板节点的亮度曲线（`qcom,mdss-dsi-bl-pmic-control-type` 之类）没搬过来，现在是线性映射，观感可能不对。
 
@@ -121,7 +126,14 @@ fastboot flash boot boot.img         # 内核 + DTB 打包在 boot 里
 - 打完补丁后 `sm8150-oneplus-hotdogb.dtb`、`panel-samsung-sofef03f.o`、`rmi_i2c.o` 都能编译
 - 原工作区完整 `Image` 编译通过，DTB 里该有的节点都在
 
-还没做的：真机出图、真机触屏（见上面"状态"）。
+LCDB 那部分（0015–0018）另外做过的：
+
+- 干净 7.3.3 上按 CI 的方式把 0000–0018 全部 `patch -p1` 打进去，无冲突
+- `qcom-lcdb-regulator.o`、`panel-samsung-sofef03f.o`、`sm8150-oneplus-hotdogb.dtb` 都编译通过，`Image` 完整链接
+- `checkpatch.pl --strict`：0 error 0 warning（`min_uV` 那条 CamelCase 是字段名，误报）
+- DTB 里 `lcdb@ec00` 有 `lab`/`ibb` 两个子节点，面板节点上 `lab-supply`/`ibb-supply` 指向它们
+
+还没做的：真机出图、真机触屏、LCDB 上下电（见上面"状态"）。
 
 ## 这个文件夹里没有的东西
 

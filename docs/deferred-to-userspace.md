@@ -20,8 +20,8 @@ Debian/rootfs 起来之后应该删掉，换成标准做法。
 
 ## 仍然必须在内核里解决的
 
-- **LCDB 偏压**（PM8150L 的 `qpnp-lcdb`）。现在屏幕能亮是靠 ABL 留下的状态，没有驱动接管；
-  彻底断电（拔电池 / EDL）之后大概率就不亮了。
+- **LCDB 偏压的板级参数**（ILIM / PFM / soft-start）。驱动只设电压和开关，
+  电流限值这些仍是启动器留下的值；换屏或改偏压时要回内核改 DT。
 - 亮度曲线如果要精确，改面板驱动。
 - `dsi_err_worker: status=…` 和 `msm_dsi_host_cmd_rx:Invalid response cmd` 的日志噪声：
   上游化时顺手改（`DSI_ERR_STATE_ACK` 被定义成 `0x0000`，所以 ACK 错误和"无错误"打印一样），
