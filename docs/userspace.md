@@ -86,9 +86,32 @@ MPSS 在本机分区里是 `modem.mdt` + 分片格式；DTS 的 remoteproc 现�
 顺序很重要：MPSS 起来之前必须有 `rmtfs`、`pd-mapper`、`tqftpserv`，否则
 MPSS 会 assert，`ath10k` 永远等不到 `ATH10k WLAN firmware service`。
 
+**EFS 必须是可写的。** 调制解调器起来的过程中会往 EFS 里同步 NV 项，`rmtfs -r`
+对这些写回 `EROFS`，结果就是 `wlan_process` 的 init 永远走不完（
+`dog_virtual_root.c:92: User-PD grace timer expired for wlan_process`），
+接着每 40 秒一次 fatal error。Debian 的 `rmtfs.service` 正是 `rmtfs -r -P -s`，
+而且默认开机自启，所以 rootfs 里已经把它 mask 掉，改由 `hotdogb-radio.sh`
+把 `/var/lib/hotdogb/rmtfs` 的 EFS 副本复制到 tmpfs 上再以可写方式起 rmtfs
+（顺带避免 modem 起来时和 NBD 抢 I/O）。
+
+日常就用这三个命令，不要手工起服务：
+
 ```sh
-# 1. EFS / PD 服务（rmtfs 用发行版 unit，自己起会缺 -P -s）
-systemctl start rmtfs
+hotdogb-radio.sh start    # rmtfs(tmps) + tqftpserv + pd-mapper + MPSS
+hotdogb-radio.sh wifi     # 等 WLFW，再 insmod ath10k
+hotdogb-radio.sh diag     # 出问题时先看这个：状态、服务日志、QRTR、dmesg
+```
+
+手工等价步骤如下（排查时用）：
+
+```sh
+# 1. EFS：复制到 tmpfs，用可写方式起 rmtfs
+mkdir -p /run/hotdogb/rmtfs
+for f in modem_fs1 modem_fs2 modem_fsg modem_fsc; do
+	cp "/var/lib/hotdogb/rmtfs/$f" /run/hotdogb/rmtfs/
+done
+systemctl stop rmtfs 2>/dev/null; pkill -x rmtfs
+rmtfs -o /run/hotdogb/rmtfs &
 # 2. SLPI 先起来，pd-mapper 才有东西可枚举
 echo start > /sys/class/remoteproc/remoteproc0/state    # slpi
 # 3. PD 表来自固件目录里的 *.jsn，没有它们 pd-mapper 直接退出

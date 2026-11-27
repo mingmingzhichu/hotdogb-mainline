@@ -323,13 +323,20 @@ if [ -d "$LOCAL_FIRMWARE" ]; then
 
 	# Radio service chain.  The initramfs radio section is skipped under
 	# hotdogb.netboot=1, so on a netbooted Debian nothing starts MPSS unless
-	# hotdogb-radio.service is started explicitly.  The Debian packages rmtfs
-	# and tqftpserv are already installed (with the correct -r -P -s flags for
-	# rmtfs); the only missing piece is pd-mapper, which Debian does not
-	# package, so ship the statically linked aarch64 binary.  The ordered
-	# start script prefers the distro rmtfs/tqftpserv services.  The unit
-	# is manual-only and guarded by
-	# ConditionPathExists on modem.mdt, so it cannot start MPSS at boot.
+	# hotdogb-radio.service is started explicitly.  pd-mapper is the only
+	# missing piece (Debian does not package it), so ship the statically
+	# linked aarch64 binary.
+	#
+	# rmtfs.service is masked: it runs `rmtfs -r -P -s`, i.e. read-only on the
+	# real partitions, and it is enabled at boot.  The modem writes into EFS
+	# while coming up, and with a read-only store wlan_process never finishes
+	# its init ("grace timer expired" every ~40 s).  hotdogb-radio.sh serves a
+	# writable copy of the baked EFS dump from tmpfs instead, so the boot-time
+	# read-only instance must not exist at all.
+	rm -f "$ROOT/etc/systemd/system/multi-user.target.wants/rmtfs.service"
+	ln -sf /dev/null "$ROOT/etc/systemd/system/rmtfs.service"
+	# The unit is manual-only and guarded by ConditionPathExists on the
+	# firmware, so it cannot start MPSS at boot.
 	install -d "$ROOT/usr/local/sbin"
 	if [ -n "$USERSPACE_TOOLS" ]; then
 		# CI cross-builds pd-mapper (not in Debian).  rmtfs/tqftpserv
