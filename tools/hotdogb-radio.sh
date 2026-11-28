@@ -306,15 +306,19 @@ do_wifi() {
 	# module from elsewhere on the system cannot be picked up by accident.
 	# The insmod failures are printed, not swallowed: "version magic ... should
 	# be ..." here means the rootfs carries modules from another kernel build.
-	ATHDIR="$MODDIR/kernel/drivers/net/wireless/ath"
-	ATH10KDIR="$ATHDIR/ath10k"
-	for m in cfg80211 mac80211 ath; do
-		[ -f "$ATHDIR/$m.ko" ] || { say "missing $ATHDIR/$m.ko"; return 1; }
-		err=$(insmod "$ATHDIR/$m.ko" 2>&1) || say "insmod $m failed: $err"
-	done
-	for m in ath10k_core ath10k_snoc; do
-		[ -f "$ATH10KDIR/$m.ko" ] || { say "missing $ATH10KDIR/$m.ko"; return 1; }
-		err=$(insmod "$ATH10KDIR/$m.ko" 2>&1) || say "insmod $m failed: $err"
+	# modules_install scatters these over three directories: cfg80211 under
+	# kernel/net/wireless, mac80211 under kernel/net/mac80211, the ath ones
+	# under kernel/drivers/net/wireless/ath.  Look them up by name instead of
+	# assuming a layout - the flat ath/ directory this used to expect only
+	# existed because a hand-copied module set was dropped there.
+	find_module() {
+		found=$(find "$MODDIR/kernel" -type f -name "$1.ko" 2>/dev/null | head -n 1)
+		[ -n "$found" ] || return 1
+		echo "$found"
+	}
+	for m in cfg80211 mac80211 ath ath10k_core ath10k_snoc; do
+		path=$(find_module "$m") || { say "missing $m.ko under $MODDIR"; return 1; }
+		err=$(insmod "$path" 2>&1) || say "insmod $m failed: $err"
 	done
 	[ -d /sys/module/ath10k_core ] && \
 		echo 3145760 > /sys/module/ath10k_core/parameters/debug_mask 2>/dev/null
