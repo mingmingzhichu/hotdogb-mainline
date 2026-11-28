@@ -134,7 +134,7 @@ new file mode 100644
 index 0000000..22a0d10
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm8150-oneplus-common.dtsi
-@@ -0,0 +1,545 @@
+@@ -0,0 +1,548 @@
 +// SPDX-License-Identifier: BSD-3-Clause
 +/*
 + * Copyright (c) 2020, The Linux Foundation. All rights reserved.
@@ -559,6 +559,9 @@ index 0000000..22a0d10
 +};
 +
 +&pon {
++	mode-bootloader = <0x2>;
++	mode-recovery = <0x1>;
++
 +	pwrkey {
 +		status = "okay";
 +	};
