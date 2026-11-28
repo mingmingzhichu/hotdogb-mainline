@@ -60,6 +60,24 @@ rootfs 不会自动启动无线栈。
 | `firmware/rmtfs-efs/` | `modemst1/2`、`fsg`、`fsc` 分区镜像 | `/var/lib/hotdogb/rmtfs/{modem_fs1,modem_fs2,modem_fsg,modem_fsc}` |
 | `firmware/wifi-board/board-2.bin` | 真机验证过的板级数据 | `ath10k/WCN3990/hw1.0/board-2.bin`（覆盖 Debian 通用包） |
 
-`hotdogb-radio.sh` 据此用 `rmtfs -o <dir> -r`（目录模式）而不是 systemd 的
-`-P`（按 GPT 标签找分区）。这些目录和 `firmware_mnt/` 一样随仓库分发，
-CI 构建也会把完整 Wi-Fi 数据打进 rootfs。
+`hotdogb-radio.sh` 据此把 EFS 副本复制到 tmpfs，用可写方式起 `rmtfs -o <dir>`
+（systemd 的 `-P -r` 是只读的，调制解调器同步 NV 时会失败）。这些目录和
+`firmware_mnt/` 一样随仓库分发，CI 构建也会把完整 Wi-Fi 数据打进 rootfs。
+
+## 模块必须和 Image 同一次构建（2026-11-28）
+
+rootfs 里不能放“别处编好的” ath10k `.ko`。曾经有一版 `firmware/wifi-modules/`，
+是从 7.0.0 那次 bring-up 里挑出来的 5 个“验证过”的模块，CI 拿它覆盖内核自己
+编出来的那份，结果在 7.3.3 上 `insmod` 直接失败：
+
+```
+ath10k_snoc: version magic '7.0.0-sm8150-g8e126dbc4044-dirty SMP preempt mod_unload aarch64'
+             should be '7.3.3-sm8150 SMP preempt mod_unload aarch64'
+```
+
+模块其实一个都没加载上，`wlan0` 当然永远不出现，而日志里只有一句
+`insmod ath10k_snoc failed`。那批文件已经删掉；现在 CI 只装
+`kernel-out/modules.tar.gz` 里的模块，并在 `Integrate kernel modules` 那一步对
+镜像里每个 `.ko` 做 `modinfo -F vermagic` 比对，对不上就直接失败。
+
+结论：Wi-Fi 驱动的问题只能在驱动里解决，换二进制绕不过去。

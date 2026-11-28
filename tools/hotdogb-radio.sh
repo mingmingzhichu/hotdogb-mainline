@@ -300,20 +300,21 @@ do_wifi() {
 		return 0
 	fi
 	# Load in the exact order of the verified initramfs path (wifi_up.sh):
-	# cfg80211 -> mac80211 -> ath -> ath10k_core -> ath10k_snoc.  Do NOT use
-	# modprobe here: the distro/Debian ath10k modules have a different build
-	# from the ones verified on this handset and probing them drops the SoC
-	# into EDL.  build_debian_rootfs.sh installs the verified modules into
-	# $MODDIR/ath/ and ath10k/ (from firmware/wifi-modules/).
+	# cfg80211 -> mac80211 -> ath -> ath10k_core -> ath10k_snoc.  These are the
+	# modules from the running kernel's own build ($MODDIR), which is the only
+	# set whose vermagic matches; insmod by path rather than modprobe so a
+	# module from elsewhere on the system cannot be picked up by accident.
+	# The insmod failures are printed, not swallowed: "version magic ... should
+	# be ..." here means the rootfs carries modules from another kernel build.
 	ATHDIR="$MODDIR/kernel/drivers/net/wireless/ath"
 	ATH10KDIR="$ATHDIR/ath10k"
 	for m in cfg80211 mac80211 ath; do
 		[ -f "$ATHDIR/$m.ko" ] || { say "missing $ATHDIR/$m.ko"; return 1; }
-		insmod "$ATHDIR/$m.ko" 2>/dev/null || say "insmod $m failed"
+		err=$(insmod "$ATHDIR/$m.ko" 2>&1) || say "insmod $m failed: $err"
 	done
 	for m in ath10k_core ath10k_snoc; do
 		[ -f "$ATH10KDIR/$m.ko" ] || { say "missing $ATH10KDIR/$m.ko"; return 1; }
-		insmod "$ATH10KDIR/$m.ko" 2>/dev/null || say "insmod $m failed"
+		err=$(insmod "$ATH10KDIR/$m.ko" 2>&1) || say "insmod $m failed: $err"
 	done
 	[ -d /sys/module/ath10k_core ] && \
 		echo 3145760 > /sys/module/ath10k_core/parameters/debug_mask 2>/dev/null

@@ -227,14 +227,21 @@ jobs:
           sudo mount -o loop out/netboot-debian.img /mnt/hotdogb-root
           sudo mkdir -p /mnt/hotdogb-root/lib/modules
           sudo tar xzf kernel-out/modules.tar.gz -C /mnt/hotdogb-root/lib/modules --strip-components=3
-          # The ath10k modules from the kernel build make the WCN3990 drop the
-          # SoC into EDL (verified 2026-11-27).  Replace them with the exact
-          # set verified on the handset; hotdogb-radio.sh wifi insmods these
-          # in order rather than calling modprobe.
           KVER=$(ls /mnt/hotdogb-root/lib/modules)
           ATHDIR="/mnt/hotdogb-root/lib/modules/$KVER/kernel/drivers/net/wireless/ath"
-          sudo cp firmware/wifi-modules/*.ko "$ATHDIR/"
-          sudo cp firmware/wifi-modules/ath10k/*.ko "$ATHDIR/ath10k/"
+          # Everything in the image has to come from this kernel build.  The
+          # modules are insmod'd by hotdogb-radio.sh, and a vermagic mismatch
+          # means they never load - the image used to ship a "verified" ath10k
+          # set that had been built against 7.0.0, so on 7.3.3 insmod failed
+          # and wlan0 could never appear.
+          for m in cfg80211 mac80211 ath ath10k/ath10k_core ath10k/ath10k_snoc; do
+            sudo test -f "$ATHDIR/$m.ko" || { echo "missing $m.ko in the module tree"; exit 1; }
+          done
+          for ko in $(sudo find "/mnt/hotdogb-root/lib/modules/$KVER" -name '*.ko'); do
+            vm=$(modinfo -F vermagic "$ko" | awk '{print $1}')
+            [ "$vm" = "$KVER" ] || {
+              echo "vermagic mismatch: $ko is $vm, kernel is $KVER"; exit 1; }
+          done
           sudo depmod -b /mnt/hotdogb-root "$KVER"
           sudo test -f "/mnt/hotdogb-root/lib/modules/$KVER/modules.dep"
           # The desktop stack is easy to lose to a typo in the package list;
