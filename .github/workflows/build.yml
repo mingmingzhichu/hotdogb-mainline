@@ -228,19 +228,27 @@ jobs:
           sudo mkdir -p /mnt/hotdogb-root/lib/modules
           sudo tar xzf kernel-out/modules.tar.gz -C /mnt/hotdogb-root/lib/modules --strip-components=3
           KVER=$(ls /mnt/hotdogb-root/lib/modules)
-          ATHDIR="/mnt/hotdogb-root/lib/modules/$KVER/kernel/drivers/net/wireless/ath"
           # Everything in the image has to come from this kernel build.  The
           # modules are insmod'd by hotdogb-radio.sh, and a vermagic mismatch
           # means they never load - the image used to ship a "verified" ath10k
           # set that had been built against 7.0.0, so on 7.3.3 insmod failed
           # and wlan0 could never appear.
-          for m in cfg80211 mac80211 ath ath10k/ath10k_core ath10k/ath10k_snoc; do
-            sudo test -f "$ATHDIR/$m.ko" || { echo "missing $m.ko in the module tree"; exit 1; }
+          #
+          # modules_install keeps cfg80211 under kernel/net/wireless and
+          # mac80211 under kernel/net/mac80211, so look each module up by name
+          # instead of assuming they sit next to ath.ko.
+          MODROOT="/mnt/hotdogb-root/lib/modules/$KVER"
+          for m in cfg80211 mac80211 ath ath10k_core ath10k_snoc; do
+            sudo find "$MODROOT" -name "$m.ko" | grep -q . || {
+              echo "missing $m.ko in the module tree"; exit 1; }
           done
-          for ko in $(sudo find "/mnt/hotdogb-root/lib/modules/$KVER" -name '*.ko'); do
-            vm=$(modinfo -F vermagic "$ko" | awk '{print $1}')
+          for ko in $(sudo find "$MODROOT" -name '*.ko'); do
+            # `modinfo -F vermagic` returns nothing for some modules with the
+            # kmod on this runner even though the string is in .modinfo, so
+            # read it out of the file instead of trusting the parser.
+            vm=$(grep -a -m1 -o 'vermagic=[^ ]*' "$ko" | cut -d= -f2)
             [ "$vm" = "$KVER" ] || {
-              echo "vermagic mismatch: $ko is $vm, kernel is $KVER"; exit 1; }
+              echo "vermagic mismatch: $ko is '${vm:-none}', kernel is $KVER"; exit 1; }
           done
           sudo depmod -b /mnt/hotdogb-root "$KVER"
           sudo test -f "/mnt/hotdogb-root/lib/modules/$KVER/modules.dep"
