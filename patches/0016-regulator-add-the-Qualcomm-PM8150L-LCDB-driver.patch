@@ -1,6 +1,6 @@
-From 6db7d27564e58d3ac28cb4ec36fecba6999b5a63 Mon Sep 17 00:00:00 2001
+From f91f139f67a5b4953f4c96cd3c19ecd37bb84cf6 Mon Sep 17 00:00:00 2001
 From: mingmingzhichu <lihaoyu0717@outlook.com>
-Date: Sat, 28 Nov 2026 00:16:11 +0800
+Date: Sat, 28 Nov 2026 09:31:33 +0800
 Subject: [PATCH 2/4] regulator: add the Qualcomm PM8150L LCDB driver
 
 The PM8150L carries the LCDB block at SPMI address 0xec00: a boost
@@ -12,16 +12,20 @@ splash, which means a cold boot or a display power cycle loses them.
 The vendor driver covers several PMICs and a lot of policy that mainline
 does not need (touch-to-wake, secure UI mode, per-board current limits).
 This driver implements what a panel needs: output voltage selection, the
-shared module enable with its VREG_OK handshake and the discharge path
-used when the rails go away, plus taking over the live register state
-when the bootloader already powered the block.
+shared module enable with its VREG_OK handshake, the discharge path used
+when the rails go away, plus taking over the live register state when the
+bootloader already powered the block.
 
-Tested on the OnePlus 7T (hotdogb) with a Samsung SOFEF03F panel.
+The short-circuit interrupt is wired up when the board describes it: the
+rails are dropped and never re-armed automatically, because re-enabling
+from interrupt context would fight with the panel's power sequencing.
+
+Built and booted-in-tree, but not yet validated on a handset.
 ---
  drivers/regulator/Kconfig               |  10 +
  drivers/regulator/Makefile              |   1 +
- drivers/regulator/qcom-lcdb-regulator.c | 512 ++++++++++++++++++++++++
- 3 files changed, 523 insertions(+)
+ drivers/regulator/qcom-lcdb-regulator.c | 589 ++++++++++++++++++++++++
+ 3 files changed, 600 insertions(+)
  create mode 100755 drivers/regulator/qcom-lcdb-regulator.c
 
 diff --git a/drivers/regulator/Kconfig b/drivers/regulator/Kconfig
@@ -57,10 +61,10 @@ index 5a764cec8..99270ce5d 100644
  obj-$(CONFIG_REGULATOR_QCOM_RPM) += qcom_rpm-regulator.o
 diff --git a/drivers/regulator/qcom-lcdb-regulator.c b/drivers/regulator/qcom-lcdb-regulator.c
 new file mode 100755
-index 000000000..8a6b9c611
+index 000000000..1a53085f1
 --- /dev/null
 +++ b/drivers/regulator/qcom-lcdb-regulator.c
-@@ -0,0 +1,512 @@
+@@ -0,0 +1,589 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Qualcomm PM8150L LCDB (LCD bias) regulator driver
@@ -78,6 +82,8 @@ index 000000000..8a6b9c611
 + */
 +
 +#include <linux/delay.h>
++#include <linux/interrupt.h>
++#include <linux/jiffies.h>
 +#include <linux/module.h>
 +#include <linux/mutex.h>
 +#include <linux/of.h>
@@ -129,6 +135,14 @@ index 000000000..8a6b9c611
 +#define LCDB_RAMP_START_UV		4500000
 +#define LCDB_RAMP_STEP_UV		500000
 +
++/*
++ * A short circuit is a fault, not a hiccup: the rails go down and stay down
++ * until the consumer prepares the panel again.  If it keeps happening the
++ * block is clearly damaged or misconfigured, so stop re-arming it.
++ */
++#define LCDB_SC_MAX_EVENTS		3
++#define LCDB_SC_WINDOW_MS		1000
++
 +#define LCDB_OFF_ON_DELAY_US		20000
 +#define LCDB_ENABLE_POLL_US		1000
 +#define LCDB_ENABLE_POLL_TRIES		20
@@ -158,6 +172,9 @@ index 000000000..8a6b9c611
 + * @enable_count: number of enabled consumers of the shared module
 + * @headroom_mv: boost headroom above the highest output
 + * @ramp: step the outputs up instead of jumping to the target
++ * @sc_count: short circuits seen inside the current window
++ * @sc_deadline: end of that window
++ * @sc_fault: too many short circuits, refuse to power the block again
 + * @lab: positive (LDO) output
 + * @ibb: negative (NCP) output
 + */
@@ -169,6 +186,9 @@ index 000000000..8a6b9c611
 +	unsigned int			enable_count;
 +	unsigned int			headroom_mv;
 +	bool				ramp;
++	unsigned int			sc_count;
++	unsigned long			sc_deadline;
++	bool				sc_fault;
 +	struct qcom_lcdb_output		lab;
 +	struct qcom_lcdb_output		ibb;
 +};
@@ -243,6 +263,9 @@ index 000000000..8a6b9c611
 +	unsigned int val;
 +	int uv, target, ret, i;
 +
++	if (lcdb->sc_fault)
++		return -EIO;
++
 +	ret = qcom_lcdb_module_ready(lcdb);
 +	if (ret)
 +		return ret;
@@ -280,7 +303,7 @@ index 000000000..8a6b9c611
 +			break;
 +
 +		if (val & LCDB_SC_ERROR)
-+			dev_warn(lcdb->dev, "short circuit reported\n");
++			dev_warn(lcdb->dev, "short circuit reported at enable\n");
 +
 +		if (val & LCDB_VREG_OK)
 +			return 0;
@@ -310,6 +333,49 @@ index 000000000..8a6b9c611
 +
 +	regmap_update_bits(lcdb->regmap, lcdb->base + LCDB_LDO_FORCE_PD,
 +			   LCDB_LDO_FORCE_PD_EN | LCDB_LDO_FORCE_PD_MODE, 0);
++}
++
++static irqreturn_t qcom_lcdb_sc_isr(int irq, void *data)
++{
++	struct qcom_lcdb *lcdb = data;
++	unsigned int status;
++	int ret;
++
++	mutex_lock(&lcdb->lock);
++
++	ret = regmap_read(lcdb->regmap, lcdb->base + LCDB_INT_RT_STATUS, &status);
++	if (ret || !(status & LCDB_SC_ERROR)) {
++		mutex_unlock(&lcdb->lock);
++		return IRQ_NONE;
++	}
++
++	if (time_after(jiffies, lcdb->sc_deadline))
++		lcdb->sc_count = 0;
++	lcdb->sc_count++;
++	lcdb->sc_deadline = jiffies + msecs_to_jiffies(LCDB_SC_WINDOW_MS);
++
++	/*
++	 * Dropping the rails is the only thing we can do from here, and it also
++	 * clears the fault condition in the hardware.  The panel re-enables
++	 * them the next time it is prepared, so there is no auto-retry: an
++	 * automatic re-enable from interrupt context would fight with the
++	 * panel's own power sequencing.
++	 */
++	qcom_lcdb_module_disable(lcdb);
++
++	if (lcdb->sc_count > LCDB_SC_MAX_EVENTS) {
++		lcdb->sc_fault = true;
++		dev_err(lcdb->dev,
++			"short circuit %u times in %ums, LCDB disabled until reboot\n",
++			lcdb->sc_count, LCDB_SC_WINDOW_MS);
++	} else {
++		dev_err(lcdb->dev, "short circuit, rails dropped (%u/%u)\n",
++			lcdb->sc_count, LCDB_SC_MAX_EVENTS);
++	}
++
++	mutex_unlock(&lcdb->lock);
++
++	return IRQ_HANDLED;
 +}
 +
 +static int qcom_lcdb_regulator_enable(struct regulator_dev *rdev)
@@ -512,6 +578,21 @@ index 000000000..8a6b9c611
 +	lcdb->ramp = device_property_read_bool(dev, "qcom,voltage-step-ramp");
 +	mutex_init(&lcdb->lock);
 +	platform_set_drvdata(pdev, lcdb);
++
++	/*
++	 * The short-circuit interrupt is optional: without it the block still
++	 * works, we just only notice a fault on the next enable.
++	 */
++	ret = platform_get_irq_byname_optional(pdev, "sc-irq");
++	if (ret > 0) {
++		int irq = ret;
++
++		ret = devm_request_threaded_irq(dev, irq, NULL, qcom_lcdb_sc_isr,
++						IRQF_ONESHOT, "lcdb-sc", lcdb);
++		if (ret)
++			return dev_err_probe(dev, ret,
++					     "cannot request sc-irq %d\n", irq);
++	}
 +
 +	ret = qcom_lcdb_register_output(lcdb, &lcdb->lab, "lab",
 +					LCDB_LDO_VOLTAGE);
