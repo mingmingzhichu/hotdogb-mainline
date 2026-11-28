@@ -1,6 +1,6 @@
-From 9988488ac49a0ebf7bb37457bb3a8afbbd8312a5 Mon Sep 17 00:00:00 2001
+From d08cd481018daeb767f5ffcb14fc5fca79f4df2d Mon Sep 17 00:00:00 2001
 From: mingmingzhichu <lihaoyu0717@outlook.com>
-Date: Sat, 28 Nov 2026 09:31:34 +0800
+Date: Sat, 28 Nov 2026 13:04:28 +0800
 Subject: [PATCH 4/4] arm64: dts: qcom: sm8150-oneplus-hotdogb: add the LCDB
  bias rails
 
@@ -11,12 +11,12 @@ for; the shared boost converter stays 150mV above the higher of them.
 The short-circuit interrupt is described as well, so a panel that shorts a
 rail is reported instead of silently dropping out.
 
-The PM8150L node needs a label for the board file to extend, so add one
-while here.
+The LDO/NCP pair is on the second PM8150L die, SID 5, so the node goes
+under that PMIC; the panel's lab/ibb supplies point at the two outputs.
 ---
  arch/arm64/boot/dts/qcom/pm8150l.dtsi         |  2 +-
- .../boot/dts/qcom/sm8150-oneplus-hotdogb.dts  | 31 +++++++++++++++++++
- 2 files changed, 32 insertions(+), 1 deletion(-)
+ .../boot/dts/qcom/sm8150-oneplus-hotdogb.dts  | 34 +++++++++++++++++++
+ 2 files changed, 35 insertions(+), 1 deletion(-)
 
 diff --git a/arch/arm64/boot/dts/qcom/pm8150l.dtsi b/arch/arm64/boot/dts/qcom/pm8150l.dtsi
 index 3911d6d0d..0160c1b22 100644
@@ -32,7 +32,7 @@ index 3911d6d0d..0160c1b22 100644
  		reg = <0x4 SPMI_USID>;
  		#address-cells = <1>;
 diff --git a/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts b/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
-index 478e0e8c2..761a8ce3e 100644
+index 478e0e8c2..f36603daf 100644
 --- a/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
 +++ b/arch/arm64/boot/dts/qcom/sm8150-oneplus-hotdogb.dts
 @@ -80,6 +80,8 @@ panel@0 {
@@ -44,7 +44,7 @@ index 478e0e8c2..761a8ce3e 100644
  
  		reset-gpios = <&tlmm 6 GPIO_ACTIVE_LOW>;
  		te-gpios = <&tlmm 8 GPIO_ACTIVE_LOW>;
-@@ -629,3 +631,32 @@ codec {
+@@ -629,3 +631,35 @@ codec {
  		};
  	};
  };
@@ -55,25 +55,28 @@ index 478e0e8c2..761a8ce3e 100644
 + * only consumer, so they come up when it is prepared and go away again when
 + * it is unprepared.
 + */
-+&pm8150l {
-+	lcdb@ec00 {
-+		compatible = "qcom,pm8150l-lcdb";
-+		reg = <0xec00>;
-+		interrupts = <0x4 0xec 0x1 IRQ_TYPE_EDGE_RISING>;
-+		interrupt-names = "sc-irq";
++&spmi_bus {
++	/* The LDO/NCP pair sits on the second PM8150L die, SID 5. */
++	pmic@5 {
++		lcdb@ec00 {
++			compatible = "qcom,pm8150l-lcdb";
++			reg = <0xec00>;
++			interrupts = <0x5 0xec 0x1 IRQ_TYPE_EDGE_RISING>;
++			interrupt-names = "sc-irq";
 +
-+		qcom,voltage-step-ramp;
++			qcom,voltage-step-ramp;
 +
-+		lcdb_lab: lab {
-+			regulator-name = "lab";
-+			regulator-min-microvolt = <4600000>;
-+			regulator-max-microvolt = <4600000>;
-+		};
++			lcdb_lab: lab {
++				regulator-name = "lab";
++				regulator-min-microvolt = <4600000>;
++				regulator-max-microvolt = <4600000>;
++			};
 +
-+		lcdb_ibb: ibb {
-+			regulator-name = "ibb";
-+			regulator-min-microvolt = <4600000>;
-+			regulator-max-microvolt = <4600000>;
++			lcdb_ibb: ibb {
++				regulator-name = "ibb";
++				regulator-min-microvolt = <4600000>;
++				regulator-max-microvolt = <4600000>;
++			};
 +		};
 +	};
 +};

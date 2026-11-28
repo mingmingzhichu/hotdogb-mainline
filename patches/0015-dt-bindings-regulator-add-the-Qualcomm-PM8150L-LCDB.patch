@@ -1,6 +1,6 @@
-From 76d951b524f70c2f8debcc141ed63d206ca8d26b Mon Sep 17 00:00:00 2001
+From 28b3a4df4f8637b0098c03ed9d6750b75fef6f19 Mon Sep 17 00:00:00 2001
 From: mingmingzhichu <lihaoyu0717@outlook.com>
-Date: Sat, 28 Nov 2026 09:31:32 +0800
+Date: Sat, 28 Nov 2026 13:04:26 +0800
 Subject: [PATCH 1/4] dt-bindings: regulator: add the Qualcomm PM8150L LCDB
 
 The LCDB block in the PM8150L generates the two bias rails of an AMOLED

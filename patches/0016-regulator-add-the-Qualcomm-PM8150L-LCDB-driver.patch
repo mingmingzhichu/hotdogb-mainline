@@ -1,6 +1,6 @@
-From f91f139f67a5b4953f4c96cd3c19ecd37bb84cf6 Mon Sep 17 00:00:00 2001
+From 7204685eb63021627c737a6174a7ff27af07acc3 Mon Sep 17 00:00:00 2001
 From: mingmingzhichu <lihaoyu0717@outlook.com>
-Date: Sat, 28 Nov 2026 09:31:33 +0800
+Date: Sat, 28 Nov 2026 13:04:27 +0800
 Subject: [PATCH 2/4] regulator: add the Qualcomm PM8150L LCDB driver
 
 The PM8150L carries the LCDB block at SPMI address 0xec00: a boost

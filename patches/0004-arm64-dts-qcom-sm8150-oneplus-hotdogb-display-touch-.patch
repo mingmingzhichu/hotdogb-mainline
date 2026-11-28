@@ -80,7 +80,7 @@ index 3d3cf66..7e0c501 100755
  		};
  
  		removed_region: removed-region@89d00000 {
-@@ -64,3 +49,361 @@
+@@ -64,3 +49,354 @@
  		};
  	};
  };
@@ -409,13 +409,6 @@ index 3d3cf66..7e0c501 100755
 + * interface cannot come up until the modem side is sorted out (see above).
 + */
 +&wifi {
-+	/*
-+	 * TrustZone does not let the non-secure world remap the WCN3990 MSA
-+	 * window (the map request comes back -EINVAL), but it is already mapped
-+	 * for the modem, so tell the driver to leave the permissions alone.
-+	 * Without this ath10k cannot get past QMI and no WMI vdev is created.
-+	 */
-+	qcom,msa-fixed-perm;
 +	vdd-0.8-cx-mx-supply = <&vreg_l1a_0p75>;
 +	vdd-1.8-xo-supply = <&vreg_l7a_1p8>;
 +	vdd-1.3-rfa-supply = <&vreg_l2c_1p3>;

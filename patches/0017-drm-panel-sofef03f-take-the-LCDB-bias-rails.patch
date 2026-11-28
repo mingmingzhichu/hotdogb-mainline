@@ -1,6 +1,6 @@
-From 6aeb632e5a46688f6dcb3f151468cf58b80fcb83 Mon Sep 17 00:00:00 2001
+From ef0e01f4334aaaba85b7682c79d469fca9ffa3b7 Mon Sep 17 00:00:00 2001
 From: mingmingzhichu <lihaoyu0717@outlook.com>
-Date: Sat, 28 Nov 2026 09:31:34 +0800
+Date: Sat, 28 Nov 2026 13:04:27 +0800
 Subject: [PATCH 3/4] drm/panel: sofef03f: take the LCDB bias rails
 
 The panel needs the 1.8V I/O rail plus the two LCDB bias rails: lab is
