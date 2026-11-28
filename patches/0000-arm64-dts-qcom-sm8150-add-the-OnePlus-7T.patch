@@ -134,7 +134,7 @@ new file mode 100644
 index 0000000..22a0d10
 --- /dev/null
 +++ b/arch/arm64/boot/dts/qcom/sm8150-oneplus-common.dtsi
-@@ -0,0 +1,548 @@
+@@ -0,0 +1,573 @@
 +// SPDX-License-Identifier: BSD-3-Clause
 +/*
 + * Copyright (c) 2020, The Linux Foundation. All rights reserved.
@@ -205,6 +205,31 @@ index 0000000..22a0d10
 +		//	no-map;
 +		//	reg = <0 0xf2902000 0 0x1000>;
 +		// };
++		/*
++		 * Stock firmware still owns these intervals; the generic SM8150
++		 * description leaves them to the page allocator.  Firmware
++		 * touching its memory after Linux allocated it causes random
++		 * crashes, so reserve them as no-map.
++		 */
++		xbl_aop_gap: memory@85e40000 {
++			reg = <0 0x85e40000 0 0xc0000>;
++			no-map;
++		};
++
++		stock_removed_gap: memory@89b00000 {
++			reg = <0 0x89b00000 0 0x200000>;
++			no-map;
++		};
++
++		stock_cdsp_gap: memory@99517000 {
++			reg = <0 0x99517000 0 0xe9000>;
++			no-map;
++		};
++
++		stock_cdsp_sec_gap: memory@a4c00000 {
++			reg = <0 0xa4c00000 0 0x3c00000>;
++			no-map;
++		};
 +	};
 +};
 +
