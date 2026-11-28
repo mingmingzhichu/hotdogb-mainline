@@ -1,6 +1,6 @@
-From 7204685eb63021627c737a6174a7ff27af07acc3 Mon Sep 17 00:00:00 2001
+From 10bc9303552b9b42303ba0f2af7a3d3180e08e84 Mon Sep 17 00:00:00 2001
 From: mingmingzhichu <lihaoyu0717@outlook.com>
-Date: Sat, 28 Nov 2026 13:04:27 +0800
+Date: Sat, 28 Nov 2026 15:12:25 +0800
 Subject: [PATCH 2/4] regulator: add the Qualcomm PM8150L LCDB driver
 
 The PM8150L carries the LCDB block at SPMI address 0xec00: a boost
@@ -24,8 +24,8 @@ Built and booted-in-tree, but not yet validated on a handset.
 ---
  drivers/regulator/Kconfig               |  10 +
  drivers/regulator/Makefile              |   1 +
- drivers/regulator/qcom-lcdb-regulator.c | 589 ++++++++++++++++++++++++
- 3 files changed, 600 insertions(+)
+ drivers/regulator/qcom-lcdb-regulator.c | 646 ++++++++++++++++++++++++
+ 3 files changed, 657 insertions(+)
  create mode 100755 drivers/regulator/qcom-lcdb-regulator.c
 
 diff --git a/drivers/regulator/Kconfig b/drivers/regulator/Kconfig
@@ -61,10 +61,10 @@ index 5a764cec8..99270ce5d 100644
  obj-$(CONFIG_REGULATOR_QCOM_RPM) += qcom_rpm-regulator.o
 diff --git a/drivers/regulator/qcom-lcdb-regulator.c b/drivers/regulator/qcom-lcdb-regulator.c
 new file mode 100755
-index 000000000..1a53085f1
+index 000000000..eea2a9998
 --- /dev/null
 +++ b/drivers/regulator/qcom-lcdb-regulator.c
-@@ -0,0 +1,589 @@
+@@ -0,0 +1,646 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Qualcomm PM8150L LCDB (LCD bias) regulator driver
@@ -105,6 +105,7 @@ index 000000000..1a53085f1
 +
 +#define LCDB_ENABLE_CTL1		0x46
 +#define LCDB_MODULE_EN			BIT(7)
++#define LCDB_HWEN_RDY			BIT(6)
 +
 +#define LCDB_LDO_VOLTAGE		0x71
 +#define LCDB_LDO_FORCE_PD		0x79
@@ -144,7 +145,14 @@ index 000000000..1a53085f1
 +#define LCDB_SC_WINDOW_MS		1000
 +
 +#define LCDB_OFF_ON_DELAY_US		20000
-+#define LCDB_ENABLE_POLL_US		1000
++/*
++ * The boost plus the LDO and the inverting charge pump all have their own
++ * soft-start and VREG_OK debounce times; on the PM8150L that adds up to well
++ * over a millisecond per poll, and the boost needs time to actually reach
++ * regulation.  Poll for up to ~100 ms with a 5 ms delay so the handshake is
++ * not cut short by an over-eager timeout (which shows up as -110/ETIMEDOUT).
++ */
++#define LCDB_ENABLE_POLL_US		5000
 +#define LCDB_ENABLE_POLL_TRIES		20
 +
 +struct qcom_lcdb;
@@ -288,8 +296,14 @@ index 000000000..1a53085f1
 +	if (ret)
 +		return ret;
 +
++	/*
++	 * Raise MODULE_EN and drop HWEN_RDY in one write: HWEN_RDY is the
++	 * touch-to-wake path and must not be set on a normal enable (the vendor
++	 * writes the whole register with just MODULE_EN for the same reason).
++	 */
 +	ret = regmap_update_bits(lcdb->regmap, lcdb->base + LCDB_ENABLE_CTL1,
-+				 LCDB_MODULE_EN, LCDB_MODULE_EN);
++				 LCDB_MODULE_EN | LCDB_HWEN_RDY,
++				 LCDB_MODULE_EN);
 +	if (ret)
 +		return ret;
 +
@@ -314,6 +328,28 @@ index 000000000..1a53085f1
 +
 +	regmap_update_bits(lcdb->regmap, lcdb->base + LCDB_ENABLE_CTL1,
 +			   LCDB_MODULE_EN, 0);
++
++	/* Dump the status block so a timeout is not a blind guess. */
++	{
++		static const u8 sts_regs[] = { 0x08, 0x09, 0x0a, 0x0b,
++					       0x0c, 0x0d };
++		unsigned int v;
++		int k;
++
++		for (k = 0; k < ARRAY_SIZE(sts_regs); k++) {
++			if (!regmap_read(lcdb->regmap,
++					 lcdb->base + sts_regs[k], &v))
++				dev_err(lcdb->dev, "  STS%u=0x%02x\n",
++					k + 1, v);
++		}
++		for (k = 0; k < 4; k++) {
++			const u8 extra[] = { 0x10, 0x46, 0x41, 0x4b };
++			if (!regmap_read(lcdb->regmap,
++					 lcdb->base + extra[k], &v))
++				dev_err(lcdb->dev, "  REG_0x%02x=0x%02x\n",
++					extra[k], v);
++		}
++	}
 +
 +	dev_err(lcdb->dev, "LCDB failed to power up: %d\n", ret);
 +	return ret;
@@ -616,6 +652,17 @@ index 000000000..1a53085f1
 +		return ret;
 +	}
 +
++	/* Prove the regmap reaches this PMIC and the address decode is right. */
++	{
++		unsigned int type = 0;
++
++		if (!regmap_read(lcdb->regmap, 0x104, &type))
++			dev_dbg(dev, "PMIC TYPE=0x%02x (want 0x51), lcdb base=0x%x, ENABLE_CTL1=0x%02x\n",
++				type, lcdb->base, val);
++		else
++			dev_warn(dev, "cannot read PMIC TYPE at 0x104\n");
++	}
++
 +	if (val & LCDB_MODULE_EN) {
 +		ret = qcom_lcdb_read_uv(lcdb, &lcdb->lab);
 +		if (ret > 0)
@@ -624,10 +671,20 @@ index 000000000..1a53085f1
 +		if (ret > 0)
 +			lcdb->ibb.uv = ret;
 +	} else {
++		unsigned int rb;
++
 +		qcom_lcdb_module_ready(lcdb);
 +		qcom_lcdb_write_voltage(lcdb, &lcdb->lab, lcdb->lab.uv);
 +		qcom_lcdb_write_voltage(lcdb, &lcdb->ibb, lcdb->ibb.uv);
 +		qcom_lcdb_write_bst(lcdb);
++
++		/* Read back what we just wrote to see if writes stick. */
++		if (!regmap_read(lcdb->regmap, lcdb->base + LCDB_BST_VOLTAGE,
++				 &rb))
++			dev_dbg(dev, "BST_VOLTAGE written=%u readback=0x%02x\n",
++				qcom_lcdb_uv_to_sel(max(lcdb->lab.uv,
++					lcdb->ibb.uv) +
++					lcdb->headroom_mv * 1000), rb);
 +	}
 +	mutex_unlock(&lcdb->lock);
 +

@@ -1,6 +1,6 @@
-From d08cd481018daeb767f5ffcb14fc5fca79f4df2d Mon Sep 17 00:00:00 2001
+From c0b4f743b514e33efd812ae3d162ec17779a1bc7 Mon Sep 17 00:00:00 2001
 From: mingmingzhichu <lihaoyu0717@outlook.com>
-Date: Sat, 28 Nov 2026 13:04:28 +0800
+Date: Sat, 28 Nov 2026 15:12:26 +0800
 Subject: [PATCH 4/4] arm64: dts: qcom: sm8150-oneplus-hotdogb: add the LCDB
  bias rails
 
