@@ -1,0 +1,209 @@
+From 00000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: mingmingzhichu <lihaoyu0717@outlook.com>
+Subject: [PATCH] ath10k recover-msa-permissions-across-modem-restarts.patch
+
+ath10k: recover MSA permissions across modem restarts
+Tearing the modem down revokes its MSS_MSA share of the WLAN MSA
+regions without notifying the driver, so the symmetric reclaim is
+rejected with -EINVAL and Wi-Fi stays down after any modem crash.
+Track whether the assignment is ours, reclaim it on the modem-down
+notifier, and retry a firmware that refuses configuration while it
+still believes WLAN is enabled.
+
+Also declare the device wakeup capable: the HIF suspend/resume
+handlers refuse to run otherwise and WoWLAN is unusable.
+---
+diff --git a/drivers/net/wireless/ath/ath10k/qmi.c b/drivers/net/wireless/ath/ath10k/qmi.c
+index f1f33af0170a08744ae658130e29781c0e5bedfb..d300e400ea8f46f218e96c5500d44f4df620fded 100644
+--- a/drivers/net/wireless/ath/ath10k/qmi.c
++++ b/drivers/net/wireless/ath/ath10k/qmi.c
+@@ -69,16 +69,33 @@ static int ath10k_qmi_unmap_msa_permission(struct ath10k_qmi *qmi,
+ 	u64 src_perms;
+ 	int ret;
+ 
+-	src_perms = BIT(QCOM_SCM_VMID_MSS_MSA) | BIT(QCOM_SCM_VMID_WLAN);
++	u64 wlan_perms = BIT(QCOM_SCM_VMID_WLAN);
+ 
+ 	if (!mem_info->secure)
+-		src_perms |= BIT(QCOM_SCM_VMID_WLAN_CE);
++		wlan_perms |= BIT(QCOM_SCM_VMID_WLAN_CE);
+ 
+ 	dst_perms.vmid = QCOM_SCM_VMID_HLOS;
+ 	dst_perms.perm = QCOM_SCM_PERM_RW;
+ 
++	/* The hypervisor checks the source set against who actually owns the
++	 * region, so it has to be exact. Tearing the modem down revokes its
++	 * MSS_MSA share without telling us, and the symmetric reclaim below
++	 * is then rejected with -EINVAL, which is what leaves Wi-Fi down
++	 * after a modem crash. Fall back to the set that survives.
++	 */
++	src_perms = BIT(QCOM_SCM_VMID_MSS_MSA) | wlan_perms;
++
++	ret = qcom_scm_assign_mem(mem_info->addr, mem_info->size,
++				  &src_perms, &dst_perms, 1);
++	if (ret != -EINVAL)
++		goto out;
++
++	src_perms = wlan_perms;
++
+ 	ret = qcom_scm_assign_mem(mem_info->addr, mem_info->size,
+ 				  &src_perms, &dst_perms, 1);
++
++out:
+ 	if (ret < 0)
+ 		ath10k_err(ar, "failed to unmap msa permissions: %d\n", ret);
+ 
+@@ -99,6 +116,8 @@ static int ath10k_qmi_setup_msa_permissions(struct ath10k_qmi *qmi)
+ 			goto err_unmap;
+ 	}
+ 
++	qmi->msa_perm_granted = true;
++
+ 	return 0;
+ 
+ err_unmap:
+@@ -114,8 +133,43 @@ static void ath10k_qmi_remove_msa_permission(struct ath10k_qmi *qmi)
+ 	if (qmi->msa_fixed_perm)
+ 		return;
+ 
++	/* Reclaiming regions we do not hold is rejected by the hypervisor and
++	 * only produces noise, so track whether the assignment is ours. This
++	 * also makes the call idempotent, which it has to be: it is reached
++	 * both from the QMI service going away and from the modem's subsystem
++	 * restart notifier, in whichever order those happen to arrive.
++	 */
++	if (!qmi->msa_perm_granted)
++		return;
++
+ 	for (i = 0; i < qmi->nr_mem_region; i++)
+ 		ath10k_qmi_unmap_msa_permission(qmi, &qmi->mem_region[i]);
++
++	qmi->msa_perm_granted = false;
++}
++
++/**
++ * ath10k_qmi_reclaim_msa() - hand the MSA regions back to HLOS
++ * @ar: the ath10k device
++ *
++ * Called from the modem's subsystem restart notifier once the modem has
++ * stopped. A crashing modem does not always produce the QMI service removal
++ * that would otherwise trigger the reclaim, and without it the regions stay
++ * assigned to MSS_MSA: the next assignment is then rejected with -EINVAL
++ * because HLOS no longer owns them, and WLAN never comes back.
++ *
++ * This must only run while the modem is down. Taking the regions away from a
++ * running modem strips it of its own memory and kills it outright.
++ */
++void ath10k_qmi_reclaim_msa(struct ath10k *ar)
++{
++	struct ath10k_snoc *ar_snoc = ath10k_snoc_priv(ar);
++	struct ath10k_qmi *qmi = ar_snoc->qmi;
++
++	if (!qmi)
++		return;
++
++	ath10k_qmi_remove_msa_permission(qmi);
+ }
+ 
+ static int ath10k_qmi_msa_mem_info_send_sync_msg(struct ath10k_qmi *qmi)
+@@ -499,7 +553,15 @@ ath10k_qmi_cfg_send_sync_msg(struct ath10k *ar,
+ 
+ 	if (resp.resp.result != QMI_RESULT_SUCCESS_V01) {
+ 		ath10k_err(ar, "config request rejected: %d\n", resp.resp.error);
+-		ret = -EINVAL;
++		/* Report the one rejection the caller can do something about
++		 * separately: the firmware refuses to be configured while it
++		 * still believes WLAN is enabled, and turning it off first
++		 * clears that. Everything else is not recoverable here.
++		 */
++		if (resp.resp.error == QMI_ERR_INCOMPATIBLE_STATE_V01)
++			ret = -EBUSY;
++		else
++			ret = -EINVAL;
+ 		goto out;
+ 	}
+ 
+@@ -523,6 +585,18 @@ int ath10k_qmi_wlan_enable(struct ath10k *ar,
+ 		   mode, config);
+ 
+ 	ret = ath10k_qmi_cfg_send_sync_msg(ar, config, version);
++	if (ret == -EBUSY) {
++		/* WLAN was left enabled in the firmware. That happens when the
++		 * teardown could not complete, for instance when a WMI command
++		 * times out while the interface is being brought down for
++		 * suspend, and it is otherwise permanent: every later attempt
++		 * to bring WLAN up is rejected the same way and the interface
++		 * never returns. Turn it off and configure it again.
++		 */
++		ath10k_warn(ar, "wlan left enabled in firmware, turning it off\n");
++		ath10k_qmi_wlan_disable(ar);
++		ret = ath10k_qmi_cfg_send_sync_msg(ar, config, version);
++	}
+ 	if (ret) {
+ 		ath10k_err(ar, "failed to send qmi config: %d\n", ret);
+ 		return ret;
+diff --git a/drivers/net/wireless/ath/ath10k/qmi.h b/drivers/net/wireless/ath/ath10k/qmi.h
+index 0816eb4e4a18a3f3641eb64d11a4db2a36ad7616..d46a0db09cfebadada8f4c0030704774d636f106 100644
+--- a/drivers/net/wireless/ath/ath10k/qmi.h
++++ b/drivers/net/wireless/ath/ath10k/qmi.h
+@@ -107,6 +107,7 @@ struct ath10k_qmi {
+ 	char fw_build_timestamp[MAX_TIMESTAMP_LEN + 1];
+ 	struct ath10k_qmi_cal_data cal_data[MAX_NUM_CAL_V01];
+ 	bool msa_fixed_perm;
++	bool msa_perm_granted;
+ 	bool no_msa_ready_indicator;
+ 	enum ath10k_qmi_state state;
+ };
+@@ -116,6 +117,7 @@ int ath10k_qmi_wlan_enable(struct ath10k *ar,
+ 			   enum wlfw_driver_mode_enum_v01 mode,
+ 			   const char *version);
+ int ath10k_qmi_wlan_disable(struct ath10k *ar);
++void ath10k_qmi_reclaim_msa(struct ath10k *ar);
+ int ath10k_qmi_init(struct ath10k *ar, u32 msa_size);
+ int ath10k_qmi_deinit(struct ath10k *ar);
+ int ath10k_qmi_set_fw_log_mode(struct ath10k *ar, u8 fw_log_mode);
+diff --git a/drivers/net/wireless/ath/ath10k/snoc.c b/drivers/net/wireless/ath/ath10k/snoc.c
+index d51f2e5a79a401e0e3821a1a9f251e2569a1d7b1..57b8860d69841943c65a6772b408c8c6d90e79a6 100644
+--- a/drivers/net/wireless/ath/ath10k/snoc.c
++++ b/drivers/net/wireless/ath/ath10k/snoc.c
+@@ -1516,6 +1516,13 @@ static int ath10k_snoc_modem_notify(struct notifier_block *nb, unsigned long act
+ 
+ 	case QCOM_SSR_AFTER_SHUTDOWN:
+ 		ath10k_dbg(ar, ATH10K_DBG_SNOC, "received modem offline event\n");
++		/* The modem is down, so this is the one moment where the MSA
++		 * regions can be taken back safely. A crash does not reliably
++		 * produce the QMI service removal that normally reclaims them,
++		 * and leaving them assigned to MSS_MSA makes the next
++		 * assignment fail with -EINVAL, with WLAN down until reboot.
++		 */
++		ath10k_qmi_reclaim_msa(ar);
+ 		break;
+ 
+ 	default:
+@@ -1823,6 +1830,17 @@ static int ath10k_snoc_probe(struct platform_device *pdev)
+ 	if (ret)
+ 		goto err_qmi_deinit;
+ 
++	/* ath10k_snoc_hif_suspend() and its resume counterpart refuse to run
++	 * unless the device may wake the system, and nothing ever declares
++	 * that it can, so they always return -EPERM. WoWLAN is therefore
++	 * unusable however it is configured, and mac80211 falls back to
++	 * tearing the connection down on every suspend. The wake interrupt
++	 * those handlers arm is one of the copy engine interrupts requested
++	 * above, so the capability is real and only the declaration is
++	 * missing.
++	 */
++	device_init_wakeup(&pdev->dev, true);
++
+ 	ath10k_dbg(ar, ATH10K_DBG_SNOC, "snoc probe\n");
+ 
+ 	return 0;
+@@ -1871,6 +1889,8 @@ static void ath10k_snoc_remove(struct platform_device *pdev)
+ 
+ 	ath10k_dbg(ar, ATH10K_DBG_SNOC, "snoc remove\n");
+ 
++	device_init_wakeup(&pdev->dev, false);
++
+ 	reinit_completion(&ar->driver_recovery);
+ 
+ 	if (test_bit(ATH10K_SNOC_FLAG_RECOVERY, &ar_snoc->flags))

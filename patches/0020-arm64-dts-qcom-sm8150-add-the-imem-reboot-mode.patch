@@ -1,0 +1,47 @@
+From 00000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: mingmingzhichu <lihaoyu0717@outlook.com>
+Subject: [PATCH] arm64 dts-qcom-sm8150-add-the-imem-reboot-mode.patch
+
+arm64: dts: qcom: sm8150: add the IMEM reboot-mode
+Add the IMEM syscon-reboot-mode so `reboot bootloader` also writes the
+0x77665500 magic the ABL looks for in IMEM, and switch the sdhc_2
+power-domain reference to the symbolic SM8150_CX name.
+---
+diff --git a/arch/arm64/boot/dts/qcom/sm8150.dtsi b/arch/arm64/boot/dts/qcom/sm8150.dtsi
+index 3e9a816a592a77b25a4810263ab38e9d965773b4..aa0af8e049c1039f4aa3e8e47f47317e2571219f 100644
+--- a/arch/arm64/boot/dts/qcom/sm8150.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8150.dtsi
+@@ -3709,7 +3709,7 @@ sdhc_2: mmc@8804000 {
+ 			iommus = <&apps_smmu 0x6a0 0x0>;
+ 			qcom,dll-config = <0x0007642c>;
+ 			qcom,ddr-config = <0x80040868>;
+-			power-domains = <&rpmhpd 0>;
++			power-domains = <&rpmhpd SM8150_CX>;
+ 			operating-points-v2 = <&sdhc2_opp_table>;
+ 
+ 			status = "disabled";
+@@ -4590,6 +4590,24 @@ spmi_bus: spmi@c440000 {
+ 			#interrupt-cells = <4>;
+ 		};
+ 
++		sram@146bf000 {
++			compatible = "qcom,sm8150-imem", "syscon", "simple-mfd";
++			reg = <0 0x146bf000 0 0x1000>;
++
++			#address-cells = <1>;
++			#size-cells = <1>;
++
++			ranges = <0 0 0x146bf000 0x1000>;
++
++			reboot-mode@65c {
++				compatible = "syscon-reboot-mode";
++				reg = <0x65c 0x4>;
++				offset = <0x65c>;
++				mode-bootloader = <0x77665500>;
++				mode-recovery = <0x77665502>;
++			};
++		};
++
+ 		apps_smmu: iommu@15000000 {
+ 			compatible = "qcom,sm8150-smmu-500", "qcom,smmu-500", "arm,mmu-500";
+ 			reg = <0 0x15000000 0 0x100000>;

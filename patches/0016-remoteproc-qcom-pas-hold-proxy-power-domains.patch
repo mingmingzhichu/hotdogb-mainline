@@ -1,0 +1,71 @@
+From 00000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: mingmingzhichu <lihaoyu0717@outlook.com>
+Subject: [PATCH] remoteproc qcom-pas-hold-proxy-power-domains.patch
+
+remoteproc: qcom: pas: hold proxy power domains until the remote is stopped
+Based on the bring-up validated runtime fix: dropping the proxy power
+domains in the handover callback only queues them for power off, and
+nothing forces that until the first system suspend - on the SM8150
+OnePlus devices the modem does not survive losing cx/mss in that phase.
+Hold them until the remote is stopped instead.
+
+The 7.3.3 tree refactored the driver to struct qcom_pas; adapted.
+---
+--- a/drivers/remoteproc/qcom_q6v5_pas.c	2026-11-28 20:23:57.184864547 +0800
++++ b/drivers/remoteproc/qcom_q6v5_pas.c	2026-11-28 20:24:59.729597825 +0800
+@@ -81,6 +81,7 @@
+ 	struct device *proxy_pds[3];
+ 
+ 	int proxy_pd_count;
++	bool proxy_pds_held;
+ 
+ 	const char *dtb_firmware_name;
+ 	int pas_id;
+@@ -176,6 +177,8 @@
+ 		}
+ 	}
+ 
++	pas->proxy_pds_held = true;
++
+ 	return 0;
+ 
+ unroll_pd_votes:
+@@ -192,6 +195,10 @@
+ {
+ 	int i;
+ 
++	if (!pas->proxy_pds_held)
++		return;
++	pas->proxy_pds_held = false;
++
+ 	for (i = 0; i < pd_count; i++) {
+ 		dev_pm_genpd_set_performance_state(pds[i], 0);
+ 		pm_runtime_put(pds[i]);
+@@ -398,8 +405,15 @@
+ 		regulator_disable(pas->cx_supply);
+ 	clk_disable_unprepare(pas->aggre2_clk);
+ 	clk_disable_unprepare(pas->xo);
+-	qcom_pas_pds_disable(pas, pas->proxy_pds, pas->proxy_pd_count);
+-}
++	/*
++	 * The proxy power domains are deliberately not dropped here.  They are
++	 * only queued for power off and nothing forces that until the first
++	 * system suspend, by which time the remote processor has been running
++	 * for minutes - and on the SM8150 OnePlus devices the modem does not
++	 * survive losing cx/mss in that phase.  Hold them until the remote is
++	 * stopped; qcom_pas_stop() releases them.
++	 */
++	}
+ 
+ static int qcom_pas_stop(struct rproc *rproc)
+ {
+@@ -436,6 +450,9 @@
+ 	if (handover)
+ 		qcom_pas_handover(&pas->q6v5);
+ 
++	/* Nothing depends on the proxy domains once the remote is down. */
++	qcom_pas_pds_disable(pas, pas->proxy_pds, pas->proxy_pd_count);
++
+ 	if (pas->smem_host_id)
+ 		ret = qcom_smem_bust_hwspin_lock_by_host(pas->smem_host_id);
+ 
