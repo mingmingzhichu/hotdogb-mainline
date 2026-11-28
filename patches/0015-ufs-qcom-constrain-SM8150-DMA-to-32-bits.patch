@@ -1,0 +1,60 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: mingmingzhichu <lihaoyu0717@outlook.com>
+Date: Sat, 28 Nov 2026 19:15:00 +0800
+Subject: [PATCH] ufs: qcom: constrain SM8150 DMA to 32 bits
+
+Above 4 GiB the SM8150 UFS controller consumes a doorbell but leaves OCS at
+0xf and never writes a response UPIU, stalling every command.  The boot then
+hangs for tens of seconds per LUN and, in bad cases, until the watchdog
+kicks.  Keep the request lists in a 32-bit DMA aperture, matching the
+known-good downstream behaviour.
+
+---
+ drivers/ufs/host/ufs-qcom.c | 23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+diff --git a/drivers/ufs/host/ufs-qcom.c b/drivers/ufs/host/ufs-qcom.c
+index 18a978452001..785bd2c4ee51 100644
+--- a/drivers/ufs/host/ufs-qcom.c
++++ b/drivers/ufs/host/ufs-qcom.c
+@@ -8,6 +8,7 @@
+ #include <linux/cleanup.h>
+ #include <linux/delay.h>
+ #include <linux/devfreq.h>
++#include <linux/dma-mapping.h>
+ #include <linux/gpio/consumer.h>
+ #include <linux/interconnect.h>
+ #include <linux/module.h>
+@@ -2916,8 +2917,30 @@
+  * The variant operations configure the necessary controller and PHY
+  * handshake during initialization.
+  */
++static int ufs_qcom_set_dma_mask(struct ufs_hba *hba)
++{
++	/*
++	 * Keep SM8150 request lists in the known-good 32-bit DMA aperture even
++	 * when the host is attached to an Apps SMMU translated domain.  Above
++	 * 4 GiB the SM8150 UFS controller consumes a doorbell but leaves OCS at
++	 * 0xf and never writes a response UPIU, which stalls every command.
++	 */
++	if (of_device_is_compatible(hba->dev->of_node, "qcom,sm8150-ufshc")) {
++		dev_info(hba->dev,
++			 "SM8150 UFS DMA mask constrained to 32-bit\n");
++		return dma_set_mask_and_coherent(hba->dev, DMA_BIT_MASK(32));
++	}
++
++	if (hba->capabilities & MASK_64_ADDRESSING_SUPPORT &&
++	    !dma_set_mask_and_coherent(hba->dev, DMA_BIT_MASK(64)))
++		return 0;
++
++	return dma_set_mask_and_coherent(hba->dev, DMA_BIT_MASK(32));
++}
++
+ static const struct ufs_hba_variant_ops ufs_hba_qcom_vops = {
+ 	.name                   = "qcom",
++	.set_dma_mask		= ufs_qcom_set_dma_mask,
+ 	.init                   = ufs_qcom_init,
+ 	.exit                   = ufs_qcom_exit,
+ 	.get_ufs_hci_version	= ufs_qcom_get_ufs_hci_version,
+-- 
+2.47.3
