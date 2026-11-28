@@ -124,3 +124,49 @@ LCDB failed to power up: -110
 对照检查过、确认无误的：寄存器地址（0x08/0x10/0x41/0x45/0x46/0x71/0x81 与厂商一致）、
 电压编码（4600mV→sel=6）、boost 编码（4750mV→sel=2）、headroom=150mV、
 base 从 reg=<0xec00> 取、regmap 用 dev_get_regmap(parent)（与 pm8150l-gpio 相同）。
+
+## 四、LCDB enable 超时的最终定位：periph 未启动（时钟门控），依赖 XBL continuous splash
+
+### 决定性证据（真机 DIAG）
+
+读正确的 periph 类型寄存器（offset 0x04，不是 0x00）：
+
+```
+DIAG parent=0-05 base=0xec00 TYPE=0x51 SUBTYPE=0x27
+  flash_TYPE(0xd304)=0x18   ← flash periph 在线（类型 0x18，与 flash 驱动 FLASH_TYPE_VAL 一致）
+  wled_TYPE(0xd804)=0x00    ← wled 未启动
+  lcdb_TYPE(0xec04)=0x00    ← LCDB 未启动
+  wr0x41(rw=0)=0x00         ← 写 BST_VOLTAGE=0x2A，SPMI 事务"成功"(ACK)，读回 0（写被丢弃）
+```
+
+结论：不是整个 SID5 未启动（flash 在线），而是 **per-periph 时钟门控**——flash
+时钟开、lcdb/wled 时钟关。写"成功"但读回 0，正是经典时钟门控特征（"a register
+write that reaches it changes nothing; the write still completes on the bus"）。
+
+### 根因链
+
+- 正常启动：XBL（不是 ABL）在 continuous splash 阶段初始化 display（framebuffer
+  放 0x9C000000，1080×2400），顺带把 LCDB periph 时钟打开并配置好电压/使能。
+- netboot（fastboot boot）：XBL 的 display 初始化被跳过，LCDB periph 时钟未开，
+  读回 0、写不生效。主线 LCDB 驱动 enable 时写 MODULE_EN 后 poll VREG_OK 永远
+  读回 0 → -110 超时。
+- 官方主线 LCDB 驱动（Dmitry Baryshkov 2026-10-15 sm8150-display-card 系列）与我们
+  驱动逻辑一致，也明确声明依赖 bootloader 使能；换驱动不解决。
+- u-boot 补丁（Petr Hodina 2026-10）佐证：pm8150l 的 WLED node on usid 5 "never
+  returns CMD_DONE"（Xiaomi Pad 5），同属 SID5 periph 未响应。
+
+### 深挖 XBL：LCDB 初始化走 pmic_settings.bin
+
+- 解包 abl.img（ELF32 + LZMA）得到的 LinuxLoader 里没有 LCDB 字符串 → LCDB 初始化
+  不在 ABL，在 XBL。
+- xbl.img 是未压缩 ELF64 AArch64（28 个 UEFI DXE 驱动）。含字符串：
+  `pmic_settings.bin`、`/pmic/target`、`OPPOPMIC`、
+  `# Shengjun.Gou@PSW.MM.Display.LCD.Stability ... for splash logo`。
+- 即：XBL 的 PMIC/display 初始化通过外部 `pmic_settings.bin`（寄存器序列）下发，
+  LCDB 的"使能 periph + 配置电压"序列很可能在里面。
+
+### 待办
+
+- `pmic_settings.bin` 在设备分区（不在 xbl.img/abl.img），需从设备 dump 后解析
+  LCDB 寄存器序列；或反汇编 xbl.img 的 display 初始化找硬编码的 periph 使能写。
+- 设备 netboot 反复启动失败（偶发，NBD 限速无关），干扰上机验证，未定位。
