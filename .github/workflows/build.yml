@@ -136,6 +136,10 @@ jobs:
           curl -fL -o busybox.deb "$base/$deb"
           dpkg-deb -x busybox.deb busybox-static-arm64
           find busybox-static-arm64 -type f -name busybox -exec file {} \;
+          # The package also contains a 16-byte config file named "busybox";
+          # refuse to publish an artifact that has no real binary in it.
+          test -n "$(find busybox-static-arm64 -type f -name busybox -size +1M)" || {
+            echo "the package has no busybox binary"; exit 1; }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -341,7 +345,16 @@ jobs:
           cp kernel-out/Image out/Image
           cp kernel-out/sm8150-oneplus-hotdogb.dtb out/
           cp kernel-out/config out/config
-          BB=$(find busybox -type f -name busybox | head -1)
+          # The Debian package ships a 16-byte config file that is also named
+          # "busybox" (usr/share/initramfs-tools/conf-hooks.d/busybox), and
+          # `find -name busybox | head -1` picked that one: the initramfs got a
+          # shell fragment instead of /bin/sh, the kernel found no init and
+          # panicked before it could bring up the USB gadget, and the handset
+          # sat on the bootloader splash scrolling text.  Take the binary.
+          BB=$(find busybox -type f -name busybox -size +1M | head -1)
+          [ -n "$BB" ] || { echo "no busybox binary in the artifact"; exit 1; }
+          file "$BB" | grep -q 'ARM aarch64' || {
+            echo "not an aarch64 binary: $BB"; file "$BB"; exit 1; }
           # download-artifact does not preserve the executable bit
           chmod +x "$BB"
           sh tools/build_initramfs.sh "$BB" out/initramfs.cpio.gz

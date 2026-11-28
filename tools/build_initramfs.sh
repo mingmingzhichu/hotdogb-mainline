@@ -22,6 +22,29 @@ SRC=$HERE/../initramfs
 [ -x "$BB" ] || { echo "busybox not executable: $BB" >&2; exit 1; }
 [ -f "$SRC/init" ] || { echo "init script missing: $SRC/init" >&2; exit 1; }
 
+# A wrong file here fails silently and completely: /init is a shell script, so
+# without a real /bin/sh the kernel finds no init, panics, and never brings up
+# the USB gadget - the handset just sits there scrolling boot messages.
+# Debian's busybox-static package ships a 16-byte config file that is also
+# called "busybox" (usr/share/initramfs-tools/conf-hooks.d/busybox), and
+# `find -name busybox | head -1` can return that one instead of the binary.
+size=$(stat -c%s "$BB")
+[ "$size" -gt 500000 ] || {
+	echo "busybox is only $size bytes, that cannot be the binary: $BB" >&2
+	exit 1
+}
+# `echo` without quotes folds the newlines od puts between bytes.
+magic=$(echo $(od -An -tx1 -N4 "$BB") | tr -d ' ')
+[ "$magic" = "7f454c46" ] || {
+	echo "busybox is not an ELF file: $BB" >&2
+	exit 1
+}
+machine=$(echo $(od -An -tx1 -j18 -N2 "$BB") | tr -d ' ')
+[ "$machine" = "b700" ] || {
+	echo "busybox is not aarch64 (e_machine=0x$machine): $BB" >&2
+	exit 1
+}
+
 D=$(mktemp -d)
 trap 'rm -rf "$D"' EXIT
 
