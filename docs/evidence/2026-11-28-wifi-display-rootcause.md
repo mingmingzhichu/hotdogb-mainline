@@ -94,3 +94,33 @@ probe 已验证，enable 路径待下一次上机确认。
   netboot 环境里跑这类后台任务。
 - tqftpserv 在 modem 启动时只缺 `ota_firewall/ruleset` 这个无关文件，其余
   （wlanmdsp、校准）都能正常供上。
+
+## 三、LCDB enable 超时（-110）的进一步诊断（14:30 之后）
+
+poll 放宽到 100ms 后 enable 仍 -110 超时，加状态 dump 后得到决定性证据：
+
+```
+LCDB ready: lab 4600mV, ibb 4600mV, boost headroom 150mV   (probe)
+LCDB failed to power up: -110
+  STS1=0x00 STS2=0x00 STS3=0x00 STS4=0x00 STS5=0x00 STS6=0x00
+  REG_0x10(INT_RT_STATUS)=0x00
+  REG_0x46(ENABLE_CTL1)   =0x00
+  REG_0x41(BST_VOLTAGE)   =0x00   ← 驱动写了 sel=2，读回 0
+  REG_0x4b(BST_ILIM)      =0x00
+```
+
+含义：
+
+- `ENABLE_CTL1=0` 说明 probe 时读到的 MODULE_EN 就是 0 —— **ABL 在 netboot 路径下
+  没有打开 LCDB**（continuous splash 没有配偏压），驱动必须从零启动它。
+- `BST_VOLTAGE=0` 但驱动 write_bst 写了 sel=2、且 regmap 写返回成功 —— **写被静默丢弃**，
+  或者地址解码有误。这是当前要定位的点。
+- 备选解释：LCDB 外设（periph 0xec）虽能被 SPMI 寻址（读"成功"返回 0），但模块
+  本身未上线，寄存器写被硬件忽略。
+
+已加诊断（下一轮编译验证）：读 PMIC TYPE(0x104，应为 0x51) 证明 regmap 通、
+打印 base、write_bst 后读回 BST_VOLTAGE、dump 加 0x45/0x71/0x81。
+
+对照检查过、确认无误的：寄存器地址（0x08/0x10/0x41/0x45/0x46/0x71/0x81 与厂商一致）、
+电压编码（4600mV→sel=6）、boost 编码（4750mV→sel=2）、headroom=150mV、
+base 从 reg=<0xec00> 取、regmap 用 dev_get_regmap(parent)（与 pm8150l-gpio 相同）。
