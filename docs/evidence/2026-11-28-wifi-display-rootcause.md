@@ -170,3 +170,37 @@ write that reaches it changes nothing; the write still completes on the bus"）�
 - `pmic_settings.bin` 在设备分区（不在 xbl.img/abl.img），需从设备 dump 后解析
   LCDB 寄存器序列；或反汇编 xbl.img 的 display 初始化找硬编码的 periph 使能写。
 - 设备 netboot 反复启动失败（偶发，NBD 限速无关），干扰上机验证，未定位。
+
+## 五、方向反转：7T 屏幕不靠 LCDB（vendor 真机铁证）
+
+第四节的"periph 时钟门控"结论是错的。17:40 走安卓（vendor 内核 + KernelSU
+root）读真机，拿到推翻性证据——屏幕亮着的情况下：
+
+```
+dmesg:
+  LCDB: ... successfully registered! lcdb_en=0
+  msm-dsi-display: supply lab not found, using dummy regulator
+  msm-dsi-display: supply ibb not found, using dummy regulator
+sysfs:
+  /sys/class/regulator/lcdb_ldo:  disabled  4000000 (4V)
+  /sys/class/regulator/lcdb_ncp:  disabled  4000000 (4V)
+```
+
+即：LCDB 根本没 enable（lcdb_en=0），DSI 跑在 dummy regulator 上，屏幕照样亮。
+7T 的 AMOLED 偏压（ELVDD/ELVSS）是 XBL 在 continuous splash 阶段直接建立的，
+内核（vendor 和主线）都不参与 LCDB 上电。
+
+真正的根因是我们给面板硬加了 lab/ibb supply 依赖（0017/0018），导致面板
+deferred probe 等 LCDB 输出 → DSI 一直不 probe → 屏幕黑。而面板驱动原始注释
+本就写对："Mainline has no driver for that block, rely on the bootloader leaving
+them enabled (continuous splash); only vddio is modelled"。
+
+厂商 DTS 里有两个偏压模块：lcdb@ec00（SID5，LCD 屏）和 qcom,amoled（oledb@e000/
+ab@de00/ibb@dc00，OLED 屏）。7T 板级虽然 &pm8150l_lcdb status=okay，但真机
+lcdb_en=0 证明它没有实际供电——屏幕走 XBL splash 的 AMOLED 偏压。主线还有现成的
+CONFIG_REGULATOR_QCOM_LABIBB（AMOLED lab/ibb 驱动），进一步佐证。
+
+修复（commit 8ac9f16 + 9fc5f9c）：删除整条 LCDB 线（0015 dt-bindings、0016 驱动、
+0017 面板 supply、0018 DTS 节点 + defconfig 的 CONFIG_REGULATOR_QCOM_LCDB），面板
+回归只 model vddio。待上机验证屏幕是否恢复（早期是"花屏"有显示，说明 netboot 下
+XBL splash 也建立了偏压，花屏是 DSI/面板初始化序列问题，属独立议题）。
